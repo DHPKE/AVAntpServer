@@ -137,6 +137,20 @@ const top = await ev(`(() => { const cs = [...document.querySelectorAll('.grid >
 check('top row order: Sync state (left), Current time (centre), Accuracy (right)', JSON.stringify(top.titles) === JSON.stringify(['Sync state', 'Current time', 'Accuracy']) && top.x[0] < top.x[1] && top.x[1] < top.x[2] && new Set(top.y).size === 1, JSON.stringify(top))
 check('... each box is a third of the width', top.w.every(x => Math.abs(x - (top.total - 32 - 24) / 3) < 6) && Math.max(...top.w) - Math.min(...top.w) <= 2, JSON.stringify(top))
 check('System offset and Root distance are one box: offset, RMS, skew, root delay and dispersion together', await ev(`(() => { const c = [...document.querySelectorAll('.grid > .card')][2].textContent; return ['system offset', 'RMS offset', 'Skew', 'Root delay', 'Root dispersion'].every(k => c.includes(k)) })()`) && !(await text()).includes('ROOT DISTANCE'))
+// the SYNCED icon flashes once per second, on the full second of the clock, and stays still for "reduce motion"
+await ev(`window.__beats = []; new MutationObserver(ms => ms.forEach(m => { if (m.target.classList.contains('beat') && !(m.oldValue || '').split(' ').includes('beat')) window.__beats.push(Date.now() % 1000) }))
+  .observe(document.querySelector('.ring'), {attributes: true, attributeFilter: ['class'], attributeOldValue: true})`)
+await sleep(4600)
+const beats = await ev(`window.__beats`)
+const circ = (a, b) => { const d = Math.abs(a - b) % 1000; return Math.min(d, 1000 - d) }
+check('SYNCED icon: flashes once per second (4-5 flashes in 4.6 s)', beats.length >= 4 && beats.length <= 5, JSON.stringify(beats))
+check('... each flash starts on the full second of the clock (within 60 ms)', beats.length >= 4 && beats.every(b => circ(b, 0) < 60), JSON.stringify(beats))
+check('... with a 1 s glow animation that decays and runs once', await ev(`(() => { const cs = getComputedStyle(document.querySelector('.ring')); return cs.animationName === 'ringBeat' && cs.animationDuration === '1s' && cs.animationIterationCount === '1' })()`))
+await send('Emulation.setEmulatedMedia', {features: [{name: 'prefers-reduced-motion', value: 'reduce'}]}); await sleep(300)
+await ev(`window.__beats = []`); await sleep(2300)
+check('... and does not flash when the user asked for reduced motion', (await ev(`window.__beats`)).length === 0 && (await ev(`getComputedStyle(document.querySelector('.ring')).animationName`)) === 'none')
+await send('Emulation.setEmulatedMedia', {features: [{name: 'prefers-reduced-motion', value: 'no-preference'}]}); await sleep(1300)
+check('... and flashes again when that is switched off', (await ev(`window.__beats`)).length >= 1)
 check('current time card agrees with the sync state card (synchronised, not "not synchronised")', /Clock\s+synchronised/.test(t) && !/not synchronised/.test(t), t.slice(0, 300))
 check('current time card shows a UTC clock', /Current time[\s\S]*\d\d:\d\d:\d\d[\s\S]*UTC/i.test(t) && /\d{4}-\d\d-\d\d/.test(t), t.slice(0, 200))
 let tcSeen = false

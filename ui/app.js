@@ -32,8 +32,19 @@ createApp({setup() {
     await loadConfig()
     timers = [setInterval(poll, 2000), setInterval(() => now.value = Date.now(), 1000)]
     if (tab.value === 'monitor') startLive()
+    startBeat()
   }
-  function stop() { timers.forEach(clearInterval); timers = []; stopLive() }
+  // ---- the SYNCED icon flashes once per second, started on the full second of the (server-corrected) clock
+  let beatTimer = null
+  const reduceMotion = () => { try { return matchMedia('(prefers-reduced-motion: reduce)').matches } catch (_) { return false } }
+  function beat() {
+    const r = document.querySelector('.ring.ok')
+    if (r && !document.hidden && !reduceMotion()) { r.classList.remove('beat'); void r.offsetWidth; r.classList.add('beat') }
+    beatTimer = setTimeout(beat, 1000 - ((Date.now() + skew.value) % 1000) + 2)     // next full second (+2 ms: never fire just before it)
+  }
+  function startBeat() { if (!beatTimer) beat() }
+  function stopBeat() { clearTimeout(beatTimer); beatTimer = null }
+  function stop() { timers.forEach(clearInterval); timers = []; stopLive(); stopBeat() }
   async function doLogin() {
     busy.value = true; loginErr.value = ''
     try {
