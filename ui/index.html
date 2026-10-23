@@ -162,7 +162,7 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
         <label><input type="radio" value="dhcp" v-model="draft.wan.mode"> DHCP</label>
         <label><input type="radio" value="static" v-model="draft.wan.mode"> Static</label></div></div>
       <template v-if="draft.wan.mode==='static'">
-        <div class="sf"><label class="slbl">Address / prefix</label><input type="text" v-model="draft.wan.address" placeholder="192.168.1.10/24"></div>
+        <div class="sf"><label class="slbl">Address / prefix</label><input type="text" v-model="draft.wan.address" placeholder="10.1.1.24/24"><div class="smeta" style="text-align:left;margin-top:4px">Include the prefix length, for example <b>10.1.1.24/24</b>.</div></div>
         <div class="sf"><label class="slbl">Gateway</label><input type="text" v-model="draft.wan.gateway"></div>
         <div class="sf"><label class="slbl">DNS (comma separated)</label><input type="text" v-model="wanDns"></div>
       </template>

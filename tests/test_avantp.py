@@ -119,6 +119,39 @@ class Validation(unittest.TestCase):
         c["lan"]["iface"] = "enp4s0"
         self.bad(c)
 
+    def test_address_needs_a_prefix_and_the_error_says_so(self):
+        c = copy.deepcopy(BASE)
+        c["wan"] = {"iface": "enp4s0", "mode": "static", "address": "10.1.1.24", "gateway": "10.1.1.254"}
+        with self.assertRaises(config.ConfigError) as cm:
+            config.validate(c)
+        self.assertIn("needs a prefix length", str(cm.exception))
+        self.assertIn("10.1.1.24/24", str(cm.exception))
+        self.assertNotIn("gateway", str(cm.exception))            # not the misleading complaint about the gateway
+        c["wan"]["address"] = "10.1.1.24/24"
+        self.assertEqual(config.validate(c)["wan"]["address"], "10.1.1.24/24")
+        c["wan"]["address"] = "10.1.1.24/255.255.255.0"            # netmask notation works too
+        config.validate(c)
+        c["wan"]["address"] = " 10.1.1.24/24 "
+        config.validate(c)
+        for bad in ("", "10.1.1.24/33", "10.1.1.999/24", "abc", "10.1.1.24/", None, 24):
+            c["wan"]["address"] = bad
+            self.bad(c)
+        c["wan"]["address"], c["wan"]["gateway"] = "10.1.1.24/24", "10.9.9.9"
+        with self.assertRaises(config.ConfigError) as cm:
+            config.validate(c)
+        self.assertIn("10.9.9.9 is not inside the WAN network 10.1.1.0/24", str(cm.exception))
+        c["wan"]["gateway"] = "gw"
+        with self.assertRaises(config.ConfigError) as cm:
+            config.validate(c)
+        self.assertIn("not an IP address", str(cm.exception))
+
+    def test_static_vlan_address_needs_a_prefix_too(self):
+        c = copy.deepcopy(BASE)
+        c["vlans"][0]["address"] = "10.10.10.2"
+        with self.assertRaises(config.ConfigError) as cm:
+            config.validate(c)
+        self.assertIn("needs a prefix length", str(cm.exception))
+
     def test_wan_overlap_rejected(self):
         c = copy.deepcopy(BASE)
         c["wan"] = {"iface": "enp4s0", "mode": "static", "address": "10.10.10.5/24", "gateway": "10.10.10.1"}

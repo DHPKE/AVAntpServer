@@ -29,10 +29,16 @@ def _host(h, where):
 
 
 def _net(cidr, where):
+    if not isinstance(cidr, str):
+        raise ConfigError(f"{where}: an address with prefix length is required, e.g. 10.1.1.24/24")
+    cidr = cidr.strip()
+    # "10.1.1.24" would silently become a /32 and every later check would blame the gateway: ask for the prefix
+    if "/" not in cidr:
+        raise ConfigError(f"{where}: {cidr!r} needs a prefix length, e.g. {cidr or '10.1.1.24'}/24")
     try:
         return ipaddress.ip_interface(cidr)
     except ValueError:
-        raise ConfigError(f"{where}: invalid address {cidr!r}")
+        raise ConfigError(f"{where}: invalid address {cidr!r} (example: 10.1.1.24/24)")
 
 
 def validate(cfg):
@@ -53,8 +59,11 @@ def validate(cfg):
     if wan["mode"] == "static":
         wan_net = _net(wan.get("address"), "wan.address")
         _need(wan_net.version == 4, "wan.address must be IPv4")
-        gw = ipaddress.ip_address(wan.get("gateway", ""))
-        _need(gw in wan_net.network, "wan.gateway not inside wan.address network")
+        try:
+            gw = ipaddress.ip_address(str(wan.get("gateway", "")).strip())
+        except ValueError:
+            raise ConfigError(f"wan.gateway: {wan.get('gateway')!r} is not an IP address")
+        _need(gw in wan_net.network, f"wan.gateway {gw} is not inside the WAN network {wan_net.network} (from {wan_net})")
         wan["dns"] = [str(ipaddress.ip_address(d)) for d in wan.get("dns", [])]
 
     up = cfg.setdefault("upstream", {})
