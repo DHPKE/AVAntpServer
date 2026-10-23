@@ -214,6 +214,54 @@ class ProtocolTest(unittest.TestCase):
         self.assertEqual(self.ep.connected(), [])
 
 
+class RestartTest(unittest.TestCase):
+    """After the service restarts a receiver still believes it is connected: it must be told, and recognise the box."""
+
+    def test_the_session_identity_survives_a_restart(self):
+        port = free_pair()
+        a = r.Endpoint("AVAntp X", "127.0.0.1", 25, "UTC", None, (port, port + 1))
+        ssrc_a = a.ssrc
+        a.close()
+        b = r.Endpoint("AVAntp X", "127.0.0.1", 25, "UTC", None, (port, port + 1))
+        self.addCleanup(b.close)
+        self.assertEqual(b.ssrc, ssrc_a)
+        c = r.Endpoint("AVAntp Y", "127.0.0.1", 25, "UTC", None, (port + 10, port + 11))
+        self.addCleanup(c.close)
+        self.assertNotEqual(c.ssrc, ssrc_a)                                      # another VLAN/session has its own identity
+
+    def test_a_receiver_that_keeps_syncing_with_a_forgotten_session_is_told_bye_with_our_ssrc(self):
+        port = free_pair()
+        ep = r.Endpoint("AVAntp X", "127.0.0.1", 25, "UTC", None, (port, port + 1))
+        self.addCleanup(ep.close)
+        peer = Peer(port)
+        self.addCleanup(peer.close)
+        peer.send(peer.data, r.build_ck(0xABCDEF01, 0, (1, 0, 0)), port + 1)         # never joined: as after a restart
+        bye = r.parse(peer.expect(peer.data, ep))
+        self.assertEqual((bye["cmd"], bye["ssrc"]), ("BY", ep.ssrc))
+        peer.send(peer.data, r.build_ck(0xABCDEF01, 0, (2, 0, 0)), port + 1)         # again at once: rate limited
+        self.assertIsNone(peer.expect(peer.data, ep, 0.2))
+        self.assertEqual(ep.connected(), [])
+
+    def test_a_receiver_that_is_connected_is_not_told_bye(self):
+        port = free_pair()
+        ep = r.Endpoint("AVAntp X", "127.0.0.1", 25, "UTC", None, (port, port + 1))
+        self.addCleanup(ep.close)
+        peer = Peer(port)
+        self.addCleanup(peer.close)
+        peer.join(ep)
+        ck = r.parse(peer.clock_sync(ep))
+        self.assertEqual(ck["cmd"], "CK")
+
+    def test_hosts_outside_the_vlan_are_not_answered_at_all(self):
+        port = free_pair()
+        ep = r.Endpoint("AVAntp X", "127.0.0.1", 25, "UTC", "10.20.0.0/24", (port, port + 1))
+        self.addCleanup(ep.close)
+        peer = Peer(port)
+        self.addCleanup(peer.close)
+        peer.send(peer.data, r.build_ck(1, 0, (1, 0, 0)), port + 1)
+        self.assertIsNone(peer.expect(peer.data, ep, 0.2))
+
+
 class AbuseTest(unittest.TestCase):
     def setUp(self):
         self.port = free_pair()

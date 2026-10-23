@@ -16,6 +16,7 @@ import select
 import socket
 import struct
 import time
+import zlib
 
 from . import timecode as tc
 
@@ -111,7 +112,10 @@ class Endpoint:
         self.name = name.encode("utf-8")[:60].decode("utf-8", "ignore") or "AVAntp"
         self.local_ip, self.fps, self.tz, self.net, self.now = local_ip, fps, tz, network, now
         self.ports = ports
-        self.ssrc = random.getrandbits(32)
+        # the SSRC identifies this session to a receiver. Derived from the session name and address, not random, so it
+        # stays the same when the service restarts: a receiver that still thinks it is connected can then be told 'BY'.
+        self.ssrc = zlib.crc32(f"avantp|{self.name}|{local_ip}".encode()) or 1
+        self.told_bye = {}                   # ip -> last time we said BY to a receiver we do not know (rate limit)
         self.peers = {}                      # (ip, token) -> Peer
         self.seq = random.getrandbits(16)
         self.t0 = now()
@@ -194,6 +198,12 @@ class Endpoint:
         elif msg["cmd"] == "BY":
             if self.peers.pop((ip, msg["token"]), None):
                 log.info("MTC session with %s ended by the peer", ip)
+        elif msg["cmd"] in ("CK", "RS") and not any(q.ip == ip and q.ssrc == msg["ssrc"] for q in self.peers.values()):
+            # a receiver keeps talking to a session we no longer have (we restarted): tell it, so it drops the connection
+            if self.allowed(ip) and now - self.told_bye.get(ip, -99) > 5:
+                self.told_bye[ip] = now
+                log.info("%s still thinks it is connected (session lost, e.g. after a restart): telling it BY", ip)
+                sock.sendto(build_inv("BY", 0, self.ssrc), addr)
         elif msg["cmd"] == "CK" and is_data:
             p = next((q for q in self.peers.values() if q.ip == ip and q.ssrc == msg["ssrc"]), None)
             if p:
