@@ -65,6 +65,11 @@ class App:
         st["running"] = time.time() - st.get("time", 0) < 5
         return st
 
+    def software_status(self):
+        st = self._read("software.json", self.run) or {"state": "idle"}
+        st["installed_now"] = version()                      # what this process runs (changes after an update + restart)
+        return st
+
     def update_status(self):
         st = self._read("update.json", self.run) or {"state": "off"}
         if st.get("state") == "on" and st.get("until", 0) < time.time():   # the kernel closed it
@@ -171,6 +176,8 @@ def make_handler(app):
                 return self.send(200, app.update_status())
             if path == "/api/timecode":
                 return self.send(200, app.timecode_status())
+            if path == "/api/software":
+                return self.send(200, app.software_status())
             if path == "/api/logs":
                 q = {k: v[0] for k, v in parse_qs(urlsplit(self.path).query).items()}
                 try:
@@ -244,6 +251,17 @@ def make_handler(app):
                     return self.err(409, "nothing to apply: there are no saved changes")
                 with app.lock:
                     open(os.path.join(app.dir, "apply.request"), "w").close()
+                return self.send(202, {"state": "queued"})
+            if post and path == "/api/software":
+                if data.get("action") not in ("check", "update"):
+                    return self.err(400, "expected {\"action\": \"check\" or \"update\"}")
+                if app.software_status().get("state") in ("checking", "updating"):
+                    return self.err(409, "a check or update is already running")
+                if app.apply_status().get("state") in ("applying", "pending-confirm"):
+                    return self.err(409, "an apply is waiting for confirmation; finish that first")
+                with app.lock:
+                    with open(os.path.join(app.dir, "software.request"), "w") as f:
+                        f.write(data["action"])
                 return self.send(202, {"state": "queued"})
             if post and path == "/api/update-mode":
                 if not isinstance(data.get("on"), bool):

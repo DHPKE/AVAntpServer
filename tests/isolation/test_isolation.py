@@ -323,6 +323,7 @@ def unicast_tests(check, d_cfg):
     check("unicast: nothing goes to VLAN 10 at all", len(out["lan0.10"]), 0)
     wan_overlap_test(check, d_cfg)
     mtc_tests(check, d_cfg)
+    software_window_test(check, None)
 
 
 def wan_overlap_test(check, d_cfg):
@@ -440,6 +441,49 @@ def mtc_tests(check, d_cfg):
     check("mtc: a host on the WAN side gets no answer at all", (res["wan"]["ok_ctrl"], res["wan"]["rtp"]), (None, 0))
     check("mtc: status shows the session with that receiver", st[20]["state"] == "sending" and [p["ip"] for p in st[20]["peers"]] == ["10.20.0.10"], True)
     check("mtc: status: VLAN 10 is off", st[10]["state"], "off")
+
+
+def software_window_test(check, root):
+    """The real helper logic with the real firewall: web access (tcp 443 on the WAN) exists only while it asks GitHub."""
+    print("--- software update helper: web access only while it downloads")
+    from avantp import software
+    p = apply.Paths(tempfile.mkdtemp())
+    for dd in (p.data, p.run, p.etc, os.path.join(p.root, "opt/avantp")):
+        os.makedirs(dd, exist_ok=True)
+    open(os.path.join(p.root, "opt/avantp/VERSION"), "w").write("abc1234")
+    cfgd = copy.deepcopy(CFG)
+    json.dump(config.dump(config.validate(cfgd)), open(os.path.join(p.etc, "config.json"), "w"))
+    load(cfgd, tempfile.mkdtemp())                                   # the generated firewall incl. the update_window set
+    ex = NetnsExecutor(p)
+    server = ("import socket, threading\n"
+              "s = socket.socket(); s.setsockopt(1, 2, 1); s.bind(('', 443)); s.listen(20)\n"
+              "while True:\n    c, _ = s.accept(); c.close()\n")
+    srv = subprocess.Popen(["ip", "netns", "exec", "wanpeer", "python3", "-c", server])
+    time.sleep(0.5)
+    reach_wan = lambda: sh("python3 /tmp/probe.py tcp 10.99.0.1 443", "box").returncode == 0
+    inside = {}
+
+    def fetch_ok(path, timeout=10):
+        inside["reach"] = reach_wan()
+        inside["set"] = sh("nft list set inet avantp update_window", "box").stdout
+        return {"sha": "fff0001" + "0" * 33, "commit": {"message": "x", "committer": {"date": "2026-10-23"}}} if path == "/commits/main" else {"status": "ahead", "ahead_by": 1}
+
+    def fetch_fail(path, timeout=10):
+        inside["reach_fail"] = reach_wan()
+        raise OSError("connection reset")
+    open(os.path.join(p.data, "software.request"), "w").write("check")
+    check("software: before the helper runs, the box cannot open a web connection to the WAN", reach_wan(), False)
+    result = software.handle(p, ex, fetch=fetch_ok)
+    check("software: while it asks GitHub the web window is open (a real TCP connection to the WAN side works)", inside["reach"], True)
+    check("software: ... the window carries a kernel timeout (it closes by itself after 2 minutes at the latest)", "timeout 2m" in inside["set"].replace("\n", " ") or "timeout 120s" in inside["set"], True)
+    check("software: ... the check succeeded", result, "checked")
+    check("software: afterwards the window is closed again", reach_wan(), False)
+    open(os.path.join(p.data, "software.request"), "w").write("check")
+    result = software.handle(p, ex, fetch=fetch_fail)
+    check("software: when GitHub cannot be reached the helper reports an error ...", result, "error")
+    check("software: ... the window was open during the attempt and is closed again afterwards", (inside["reach_fail"], reach_wan()), (True, False))
+    check("software: and the LAN/WAN separation is untouched by all of this (LAN host still cannot reach the WAN peer)", ping("lanhost", "10.99.0.1"), False)
+    srv.kill()
 
 
 def helper_tests(check, listener_ok):

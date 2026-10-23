@@ -122,6 +122,8 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
   <div class="banner red" v-if="restartNotice">The box restarted unexpectedly: the previous boot ended at <b>{{ restartNotice.at }}</b> without a shutdown (power loss, reset or crash).
     <button class="btn ghost" style="margin-left:12px" @click="tab='log'">OPEN LOG</button>
     <button class="btn ghost" style="margin-left:6px" @click="dismissRestart">DISMISS</button></div>
+  <div class="banner red" v-if="sw.state==='updating'">Software update running (<b>{{ sw.step || 'working' }}</b>). Do not switch the box off. The WebUI restarts in a moment; the page reloads when it is done.</div>
+  <div class="banner ok" v-else-if="sw.state==='done' && swFresh">Updated to <b>{{ sw.installed }}</b>.</div>
   <div class="banner" v-if="um.state==='on'">UPDATE MODE is on: this box may reach package servers (web ports 80/443 on the WAN) for another <b>{{ umLeftText }}</b>. It closes by itself.</div>
   <div class="banner red" v-if="draft && draft.wan.commissioning">COMMISSIONING is on: SSH and this WebUI are reachable from the WAN side. Switch it off in NETWORK once a management VLAN works.</div>
 
@@ -306,18 +308,29 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
       <div class="smeta" style="text-align:left;margin-bottom:12px">Loads the active configuration again, with the same safety net (confirm within 90 s). Use it after a software update, so the box gets the newest firewall and network rules.</div>
       <button class="btn ghost" :disabled="busy || !cfg.active || ap.state==='applying' || ap.state==='pending-confirm'" @click="applyNow(true)">RE-APPLY CURRENT CONFIG</button>
     </div>
-    <div class="card"><div class="lbl">Update mode</div>
-      <div class="cr"><span class="ck">State</span><span class="cv" :class="um.state==='on' ? 'warnc' : ''">{{ um.state==='on' ? 'ON, ' + umLeftText + ' left' : 'off' }}</span></div>
-      <div class="smeta" style="text-align:left;margin:8px 0 12px">Normally the box may only use NTP, DNS and DHCP towards the WAN, so <b>apt</b> cannot download anything. Update mode opens web access (ports 80 and 443, WAN side only) for 15 minutes and closes it again by itself. The LAN and WAN sides stay separated.</div>
-      <button class="btn" v-if="um.state!=='on'" :disabled="busy || ap.state==='applying' || ap.state==='pending-confirm' || !cfg.active" @click="setUpdateMode(true)">ENTER UPDATE MODE</button>
-      <button class="btn ghost" v-else :disabled="busy" @click="setUpdateMode(false)">END UPDATE MODE</button>
-      <div class="smeta" style="text-align:left;margin-top:10px" v-if="!cfg.active">Apply a configuration first: the firewall is not loaded yet.</div>
-      <div class="smeta" style="text-align:left;margin-top:10px" v-else-if="um.state==='on'">On the box now run: <b>sudo apt update &amp;&amp; sudo apt upgrade</b></div>
-      <div class="sst err" v-if="um.state==='error'" style="margin:10px 0 0">{{ um.error }}</div>
+    <div class="card"><div class="lbl">Software</div>
+      <div class="cr"><span class="ck">Installed</span><span class="cv">{{ version || 'unknown' }}</span></div>
+      <div class="cr"><span class="ck">Latest on GitHub</span><span class="cv" :class="swCls">{{ sw.check ? sw.check.latest : 'not checked yet' }}</span></div>
+      <div class="cr" v-if="sw.check && sw.check.date"><span class="ck">Published</span><span class="cv">{{ sw.check.date.slice(0, 10) }}</span></div>
+      <div class="smeta" style="text-align:left;margin:10px 0" :style="sw.state==='error' ? {color:'var(--red)'} : {}">{{ swText }}</div>
+      <div v-if="swBusy" style="margin:0 0 10px">
+        <div class="cr"><span class="ck">Step</span><span class="cv warnc">{{ sw.step || 'Working' }}&hellip;</span></div>
+        <div class="logbox" style="height:auto;max-height:130px;margin-top:6px;font-size:10px"><div v-for="(l, i) in (sw.log || [])" :key="i" class="ln dim">{{ l }}</div><div v-if="!(sw.log || []).length" class="ln dim">&hellip;</div></div>
+      </div>
+      <button class="btn ghost" :disabled="swBusy || busy || applyBusy" @click="swAsk('check')">CHECK FOR UPDATES</button>
+      <button class="btn" style="margin-left:8px" :disabled="swBusy || busy || applyBusy || !cfgReady" @click="swAsk('update')">UPDATE NOW</button>
+      <div class="smeta" style="text-align:left;margin-top:10px">UPDATE NOW opens web access just for the download, installs the newest version from GitHub and closes web access again. The WebUI restarts: log in again afterwards. Your network, firewall and settings are not touched.</div>
+      <details style="margin-top:12px"><summary class="smeta" style="cursor:pointer;text-align:left">Advanced: open web access by hand (for apt on the box)</summary>
+        <div class="cr" style="margin-top:8px"><span class="ck">Update mode</span><span class="cv" :class="um.state==='on' ? 'warnc' : ''">{{ um.state==='on' ? 'ON, ' + umLeftText + ' left' : 'off' }}</span></div>
+        <div class="smeta" style="text-align:left;margin:6px 0 10px">Opens ports 80 and 443 on the WAN side for 15 minutes so that <b>sudo apt update &amp;&amp; sudo apt upgrade</b> works on the box. Closes by itself.</div>
+        <button class="btn" v-if="um.state!=='on'" :disabled="busy || applyBusy || !cfg.active" @click="setUpdateMode(true)">ENTER UPDATE MODE</button>
+        <button class="btn ghost" v-else :disabled="busy" @click="setUpdateMode(false)">END UPDATE MODE</button>
+        <div class="sst err" v-if="um.state==='error'" style="margin:10px 0 0">{{ um.error }}</div>
+      </details>
     </div>
     <div class="card"><div class="lbl">About</div>
       <div class="cr"><span class="ck">Installed version</span><span class="cv">{{ version || 'unknown' }}</span></div>
-      <div class="smeta" style="text-align:left;margin-top:8px">Update on the box: <b>sudo ./deploy/update.sh</b> in the git clone.</div></div>
+      <div class="smeta" style="text-align:left;margin-top:8px">To update, use the <b>Software</b> card. By hand on the box: <b>sudo /opt/avantp/deploy/update.sh</b>.</div></div>
     <div class="card"><div class="lbl">Change password ({{ user }})</div>
       <form @submit.prevent="changePw">
         <div class="sf"><label class="slbl">Current</label><input type="password" v-model="pw.old" autocomplete="current-password"></div>

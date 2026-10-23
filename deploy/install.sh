@@ -54,6 +54,10 @@ echo "installing version $V"
 find /opt/avantp -name __pycache__ -prune -exec rm -rf {} +
 chown -R root:root /opt/avantp && chmod -R go-w /opt/avantp
 
+# ---- who owns the source clone (~/AVAntpServer-src): update.sh, also when started by the WebUI, pulls as that user
+if [ -n "${SUDO_USER:-}" ]; then echo "$SUDO_USER" > /etc/avantp/owner
+elif [ ! -f /etc/avantp/owner ]; then echo node > /etc/avantp/owner; fi
+
 # ---- keep what an earlier hand-started WebUI created (login + certificate)
 OLD=$(getent passwd "${SUDO_USER:-node}" | cut -d: -f6)/avantp-data
 for f in users.json tls.crt tls.key; do
@@ -113,11 +117,11 @@ if [ ! -f "$DATA/users.json" ]; then
 fi
 
 if [ -n "$SD" ]; then
-  systemctl enable avantp-recover.service avantp-nftables.service avantp-apply.path avantp-update.path >/dev/null 2>&1
-  systemctl enable --now avantp-web.service avantp-apply.path avantp-update.path avantp-timecode.service
+  systemctl enable avantp-recover.service avantp-nftables.service avantp-apply.path avantp-update.path avantp-software.path >/dev/null 2>&1
+  systemctl enable --now avantp-web.service avantp-apply.path avantp-update.path avantp-software.path avantp-timecode.service
   systemctl restart avantp-web.service avantp-timecode.service   # a re-run must not leave the old code running in memory
   sleep 1
-  systemctl is-active avantp-web.service avantp-apply.path avantp-update.path avantp-timecode.service
+  systemctl is-active avantp-web.service avantp-apply.path avantp-update.path avantp-software.path avantp-timecode.service
 fi
 echo "installed version $V: $(chronyd --version | head -1 | cut -c1-30), $(nft --version)"
 echo "WebUI: https://$(hostname -I | awk '{print $1}'):8443   (network and firewall are unchanged until you APPLY)"

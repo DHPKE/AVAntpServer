@@ -6,7 +6,7 @@ createApp({setup() {
   const user = ref(null), csrf = ref(''), needsSetup = ref(false), version = ref('')
   const lu = ref(''), lp = ref(''), loginErr = ref(''), busy = ref(false)
   const connected = ref(false), status = ref(null), skew = ref(0), now = ref(Date.now())
-  const cfg = ref({active: null, pending: null}), ap = ref({state: 'idle'}), um = ref({state: 'off'}), tc = ref({running: false, vlans: []})
+  const cfg = ref({active: null, pending: null}), ap = ref({state: 'idle'}), um = ref({state: 'off'}), sw = ref({state: 'idle'}), tc = ref({running: false, vlans: []})
   const draft = ref(null), up = reactive({default: '', backup: '', custom: ''}), baseline = ref('')
   const msg = ref(''), msgCls = ref('ok'), pw = reactive({old: '', new: ''})
   let timers = []
@@ -119,6 +119,10 @@ createApp({setup() {
       ap.value = await api('GET', '/api/apply')
       um.value = await api('GET', '/api/update-mode')
       tc.value = await api('GET', '/api/timecode')
+      const was = sw.value.state
+      sw.value = await api('GET', '/api/software')
+      // an update restarts the WebUI: the page that saw it 'updating' must reload to get the new program (and log in again)
+      if (was === 'updating' && sw.value.state === 'done') setTimeout(() => location.reload(), 3500)
     } catch (_) { connected.value = false }
   }
   const tr = computed(() => status.value && status.value.chrony.tracking)
@@ -286,6 +290,29 @@ createApp({setup() {
     try { await api('POST', '/api/update-mode', {on}); um.value = on ? {state: 'on', until: utcMs.value / 1000 + 900} : {state: 'off'} }
     catch (e) { msg.value = e.message; msgCls.value = 'err' } finally { busy.value = false }
   }
+  // ---- software update
+  const swBusy = computed(() => ['checking', 'updating'].includes(sw.value.state))
+  const applyBusy = computed(() => ['applying', 'pending-confirm'].includes(ap.value.state))
+  const cfgReady = computed(() => true)
+  const swFresh = computed(() => sw.value.time && utcMs.value / 1000 - sw.value.time < 120)
+  const swCls = computed(() => { const c = (sw.value.check || {}).state; return c === 'uptodate' ? 'good' : c === 'newer' ? 'warnc' : '' })
+  const swText = computed(() => {
+    const s = sw.value, c = s.check || {}
+    if (s.state === 'checking') return 'Asking GitHub for the latest version…'
+    if (s.state === 'updating') return 'Updating: ' + (s.step || 'working') + '…'
+    if (s.state === 'done') return 'Updated from ' + (s.from_version || '?') + ' to ' + (s.installed || '?') + '. The page reloads in a moment; log in again.'
+    if (s.state === 'error') return s.error || 'Something went wrong.'
+    if (s.state === 'uptodate' || c.state === 'uptodate') return 'You are up to date.'
+    if (c.state === 'newer') return c.ahead_by + ' newer commit' + (c.ahead_by === 1 ? '' : 's') + ' on GitHub: "' + c.message + '"'
+    if (c.state === 'local-newer') return 'This box runs a version that is newer than GitHub (a local build).'
+    if (c.state) return 'The installed version is not on GitHub (a local build). UPDATE NOW replaces it with the latest: "' + c.message + '"'
+    return 'Not checked yet. UPDATE NOW checks first and installs only when there is something newer.'
+  })
+  async function swAsk(action) {
+    busy.value = true
+    try { await api('POST', '/api/software', {action}); sw.value = {...sw.value, state: action === 'check' ? 'checking' : 'updating', step: 'Starting', log: []} }
+    catch (e) { msg.value = e.message; msgCls.value = 'err' } finally { busy.value = false }
+  }
   async function applyNow(force) {
     busy.value = true
     try { await api('POST', '/api/apply', force === true ? {force: true} : {}); ap.value = {state: 'applying'} } catch (e) { msg.value = e.message; msgCls.value = 'err' } finally { busy.value = false }
@@ -383,7 +410,7 @@ createApp({setup() {
 
   onMounted(start)
   onUnmounted(stop)
-  return {logSel, logLines, logErr, logLoaded, logbox, boots, bootsErr, dt, logCls, loadLog, loadBoots, copyLog, restartNotice, dismissRestart, lastUpdate, dhcpState, collapsed, toggleCard, liveTc, synced, um, umLeftText, setUpdateMode, version, tabs, tab, user, needsSetup, lu, lp, loginErr, busy, connected, doLogin, doLogout, draft, up, msg, msgCls, pw,
+  return {sw, swBusy, applyBusy, cfgReady, swFresh, swCls, swText, swAsk, logSel, logLines, logErr, logLoaded, logbox, boots, bootsErr, dt, logCls, loadLog, loadBoots, copyLog, restartNotice, dismissRestart, lastUpdate, dhcpState, collapsed, toggleCard, liveTc, synced, um, umLeftText, setUpdateMode, version, tabs, tab, user, needsSetup, lu, lp, loginErr, busy, connected, doLogin, doLogout, draft, up, msg, msgCls, pw,
     ap, left, recent, applyNow, confirm, cfg, shown, tr, chronyRunning, sources, ifaces, ifaceNames, syncCls, syncTxt, syncIcon, syncName, fmtS, off, offCls, utcNow,
     tzLabel, tzGroups, localTime, tcText, tcCls, tcStat, tc, utcDate, vlanAddr, cfgVlans, hasPending, draftDirty, wanDns, addVlan, save, changePw}
 }}).mount('#app')

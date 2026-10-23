@@ -3,7 +3,16 @@
 The box downloads new versions from GitHub (https://github.com/DHPKE/AVAntpServer, branch `main`).
 Its firewall blocks every download by design, so an update needs **Update mode** for a few minutes.
 
-## Every update (about 2 minutes)
+## The easy way: the Software card (WebUI -> SYSTEM)
+
+1. **CHECK FOR UPDATES** asks GitHub for the newest version and shows what is new.
+2. **UPDATE NOW** opens web access just for the download, installs the newest version and closes web access again.
+   You see the steps live. The WebUI restarts, the page reloads by itself, log in again.
+   It installs nothing when you are already up to date. Do not use it while an APPLY waits for confirmation.
+
+Everything below is the same thing done by hand, and the way back if you need it.
+
+## By hand: every update (about 2 minutes)
 
 1. **Check nothing is half done.** In the WebUI there must be no banner asking you to CONFIRM an apply.
 2. **Open Update mode.** WebUI -> **SYSTEM** -> **ENTER UPDATE MODE**. It lasts 15 minutes and closes by itself.

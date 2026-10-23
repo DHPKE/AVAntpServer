@@ -1,0 +1,10 @@
+[Unit]
+Description=AVAntpServer software update (opens web access only for the download, then closes it)
+
+[Service]
+Type=oneshot
+Environment=PYTHONPATH=/opt/avantp
+ExecStart=/usr/bin/python3 -m avantp software
+RuntimeDirectory=avantp
+RuntimeDirectoryPreserve=yes
+TimeoutStartSec=1200

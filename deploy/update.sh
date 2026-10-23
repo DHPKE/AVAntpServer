@@ -5,7 +5,7 @@
 set -eu
 REPO=${AVANTP_REPO:-https://github.com/DHPKE/AVAntpServer.git}
 [ "$(id -u)" -eq 0 ] || { echo "run it with sudo" >&2; exit 1; }
-OWNER=${SUDO_USER:-node}
+OWNER=${SUDO_USER:-$(cat /etc/avantp/owner 2>/dev/null || echo node)}
 HOME_DIR=$(getent passwd "$OWNER" | cut -d: -f6)
 [ -n "$HOME_DIR" ] || { echo "unknown user $OWNER" >&2; exit 1; }
 SRC="$HOME_DIR/AVAntpServer-src"

@@ -45,6 +45,52 @@ def timecode_status_path():
     return os.path.join(d, "run-timecode", "status.json") if d else "/run/avantp-timecode/status.json"
 
 
+def run_software(args):
+    """One-shot (started by avantp-software.path): handle software.request. --fake --watch is the development loop:
+    no firewall, GitHub answers come from AVANTP_DIR/fake-github.json and 'installing' only rewrites a VERSION file."""
+    import time
+    from . import apply, software
+    data, _, run = paths()
+    kw = {}
+    if "--fake" in args:
+        d = os.environ["AVANTP_DIR"]
+        p = apply.Paths(root=os.path.join(d, "sysroot"))
+        p.data, p.run = data, run
+        os.makedirs(run, exist_ok=True)
+        ex = apply.FakeExecutor()
+
+        def fake_github(path):
+            import json
+            doc = json.load(open(os.path.join(d, "fake-github.json")))
+            if "error" in doc:
+                raise OSError(doc["error"])
+            return doc.get(path.split("...")[0] if path.startswith("/compare/") else path)
+
+        def fake_run(on_line):
+            import json
+            lines = []
+            for step in ("git is not installed: installing it...", "first run: cloning x into y", "code: abc1234", "installing version fake"):
+                time.sleep(1.3)                                  # slower than the page's 2 s refresh, like a real install
+                lines.append(step)
+                on_line(list(lines))
+            new = json.load(open(os.path.join(d, "fake-github.json")))["/commits/main"]["sha"][:7]
+            v = p.under("opt/avantp/VERSION")
+            os.makedirs(os.path.dirname(v), exist_ok=True)
+            open(v, "w").write(new)
+            lines.append("installed version " + new)
+            return 0, lines
+        kw = {"fetch": fake_github, "runner": fake_run}
+    else:
+        p = apply.Paths()
+        ex = apply.SystemExecutor(p)
+    while True:
+        if os.path.lexists(os.path.join(p.data, "software.request")):
+            print("software:", software.handle(p, ex, **kw), flush=True)
+        if "--watch" not in args:
+            return 0
+        time.sleep(0.5)
+
+
 def run_update_mode(args):
     """One-shot (started by avantp-update.path): handle update.request. With --fake --watch: development loop."""
     import time
@@ -115,6 +161,8 @@ def main(argv):
         return 0
     if len(argv) == 2 and argv[1] == "timecode":
         return run_timecode()
+    if len(argv) >= 2 and argv[1] == "software":
+        return run_software(argv[2:])
     if len(argv) >= 2 and argv[1] == "update-mode":
         return run_update_mode(argv[2:])
     if len(argv) != 4 or argv[1] != "render":

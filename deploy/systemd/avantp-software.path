@@ -1,0 +1,9 @@
+[Unit]
+Description=Check for or install an AVAntpServer software update when the WebUI asks for it
+
+[Path]
+PathExists=/var/lib/avantp/software.request
+Unit=avantp-software.service
+
+[Install]
+WantedBy=multi-user.target

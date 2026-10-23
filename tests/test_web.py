@@ -184,6 +184,34 @@ class WebTest(unittest.TestCase):
         self.assertFalse(self.req("GET", "/api/timecode", cookie=ck)[1]["running"])
         os.unlink(path)
 
+    def test_software_endpoint(self):
+        _, ck, csrf = self.login()
+        self.assertEqual(self.req("GET", "/api/software")[0], 401)
+        self.assertEqual(self.req("POST", "/api/software", {"action": "update"})[0], 401)
+        self.assertEqual(self.req("POST", "/api/software", {"action": "update"}, cookie=ck)[0], 403)         # CSRF
+        for bad in ({}, {"action": "reboot"}, {"action": "UPDATE"}, {"action": ["update"]}, {"action": "update; id"}):
+            self.assertEqual(self.req("POST", "/api/software", bad, cookie=ck, csrf=csrf)[0], 400, bad)
+        st = self.req("GET", "/api/software", cookie=ck)[1]
+        self.assertEqual(st["state"], "idle")
+        self.assertIn("installed_now", st)
+        req = os.path.join(self.dir, "software.request")
+        for word in ("check", "update"):
+            st, d, _ = self.req("POST", "/api/software", {"action": word}, cookie=ck, csrf=csrf)
+            self.assertEqual((st, d["state"]), (202, "queued"))
+            self.assertEqual(open(req).read(), word)                                                       # nothing but the word
+            os.unlink(req)
+        path = os.path.join(self.dir, "software.json")
+        for busy in ("checking", "updating"):
+            json.dump({"state": busy}, open(path, "w"))
+            self.assertEqual(self.req("POST", "/api/software", {"action": "update"}, cookie=ck, csrf=csrf)[0], 409)
+        json.dump({"state": "done"}, open(path, "w"))
+        self.assertEqual(self.req("POST", "/api/software", {"action": "check"}, cookie=ck, csrf=csrf)[0], 202)
+        os.unlink(req)
+        json.dump({"state": "pending-confirm"}, open(os.path.join(self.dir, "status.json"), "w"))
+        self.assertEqual(self.req("POST", "/api/software", {"action": "update"}, cookie=ck, csrf=csrf)[0], 409)
+        os.unlink(os.path.join(self.dir, "status.json"))
+        os.unlink(path)
+
     def test_update_mode_endpoint(self):
         _, ck, csrf = self.login()
         self.assertEqual(self.req("POST", "/api/update-mode", {"on": True})[0], 401)

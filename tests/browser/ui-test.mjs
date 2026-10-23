@@ -3,11 +3,12 @@
 //   export AVANTP_DIR=<dir with users.json> AVANTP_CONFIRM_SECONDS=4 PATH=tests/browser/fakebin:$PATH
 //   python3 -m avantp apply --fake --watch &        # development helper: records instead of touching the system
 //   AVANTP_TC_DEST=127.0.0.1,127.0.0.1,16454,16504 python3 -m avantp timecode &   # the sender (Art-Net to :16454, MTC session on :16504)
+//   python3 -m avantp software --fake --watch &    # the update helper with a fake GitHub (AVANTP_DIR/fake-github.json)
 //   AVANTP_ALLOW_HTTP=1 python3 -m avantp web 127.0.0.1 8765
 //   node tests/browser/ui-test.mjs <screenshot-dir>
 import { spawn } from 'node:child_process'
 import dgram from 'node:dgram'
-import { writeFileSync, mkdtempSync } from 'node:fs'
+import { writeFileSync, mkdtempSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -16,6 +17,11 @@ const prof = mkdtempSync(join(tmpdir(), 'chrome-'))
 const chrome = spawn('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   ['--headless=new', '--remote-debugging-port=9333', `--user-data-dir=${prof}`, '--window-size=1400,1000', '--no-first-run', 'about:blank'], {stdio: 'ignore'})
 const sleep = ms => new Promise(r => setTimeout(r, ms))
+const D = process.env.AVANTP_DIR
+const fakeGithub = o => writeFileSync(`${D}/fake-github.json`, JSON.stringify(o))
+mkdirSync(`${D}/sysroot/opt/avantp`, {recursive: true}); writeFileSync(`${D}/sysroot/opt/avantp/VERSION`, 'abc1234')
+const NEW = 'fff0001' + '0'.repeat(33)
+fakeGithub({'/commits/main': {sha: NEW, commit: {message: 'Smoother pulse\n\nbody', committer: {date: '2026-10-23T22:00:00Z'}}}, '/compare/abc1234': {status: 'ahead', ahead_by: 3}})
 let targets
 for (let i = 0; i < 50; i++) { try { targets = await (await fetch('http://127.0.0.1:9333/json')).json(); if (targets.find(t => t.type === 'page')) break } catch (_) {} await sleep(200) }
 const ws = new WebSocket(targets.find(t => t.type === 'page').webSocketDebuggerUrl)
@@ -228,6 +234,45 @@ check('VLAN 10 (sender off) is labelled not sending, VLAN 20 (sending) is not', 
 check('timecode card shows the last sent timecode', /\d\d:\d\d:\d\d:\d\d/.test(t))
 await shot('5-monitor-vlans')
 
+// SYSTEM tab: Software card: check for updates, update, progress, reload
+await tab('SYSTEM'); await sleep(500)
+t = await text()
+check('Software card replaces the old Update-mode card (version, latest, two buttons)', t.includes('SOFTWARE') && t.includes('Latest on GitHub') && t.includes('not checked yet') && t.includes('CHECK FOR UPDATES') && t.includes('UPDATE NOW'), t.slice(0, 300))
+check('the manual Update mode is still there, folded under Advanced', t.includes('Advanced: open web access by hand') && await ev(`!!document.querySelector('details') && !document.querySelector('details').open && [...document.querySelectorAll('details .btn')].some(b => b.textContent.includes('ENTER UPDATE MODE'))`))
+const btn = label => `[...document.querySelectorAll('.card .btn')].find(b => b.textContent.includes('${label}'))`
+await ev(`window.__marker = 1; ${btn('CHECK FOR UPDATES')}.click()`)
+let seenChecking = false, done = false
+for (let i = 0; i < 40 && !done; i++) { await sleep(250); const x = await text(); seenChecking = seenChecking || x.includes('Asking GitHub'); done = x.includes('newer commits on GitHub') }
+t = await text()
+await shot('6-software')
+check('CHECK shows the latest version and what is new', done && t.includes('fff0001') && t.includes('3 newer commits on GitHub: "Smoother pulse"') && t.includes('2026-10-23'), t.slice(t.indexOf('SOFTWARE'), t.indexOf('SOFTWARE') + 420))
+await ev(`${btn('UPDATE NOW')}.click()`)
+const steps = new Set(); let finished = false, bothDisabled = false
+for (let i = 0; i < 80 && !finished; i++) {
+  await sleep(150); const x = await text()
+  for (const st of ['Downloading', 'Installing git', 'Downloaded', 'Installing']) if (x.includes('Step') && x.includes(st + '…')) steps.add(st)
+  bothDisabled = bothDisabled || await ev(`${btn('UPDATE NOW')}.disabled && ${btn('CHECK FOR UPDATES')}.disabled`)
+  finished = x.includes('Updated from abc1234 to fff0001')
+}
+check('UPDATE NOW shows live progress while it runs (several steps seen)', steps.size >= 2, JSON.stringify([...steps]))
+check('... both buttons are disabled while it runs', bothDisabled)
+check('... and it ends with "Updated from abc1234 to fff0001"', finished)
+check('... a banner announces the update while it runs and the result afterwards', (await text()).includes('Updated to'))
+await sleep(4500)
+check('... and the page reloads by itself afterwards (to run the new program)', await ev(`window.__marker === undefined`))
+await tab('SYSTEM'); await sleep(400)
+check('after the reload the card shows the new latest version and "up to date"', (await text()).includes('fff0001'), (await text()).slice(0, 200))
+// GitHub unreachable: a clear message, and the box is left as it was
+fakeGithub({error: 'timed out'})
+await ev(`${btn('CHECK FOR UPDATES')}.click()`)
+let errSeen = false
+for (let i = 0; i < 40 && !errSeen; i++) { await sleep(250); errSeen = (await text()).includes('Could not reach GitHub') }
+check('with no connection to GitHub the card says so', errSeen, (await text()).slice(0, 200))
+fakeGithub({'/commits/main': {sha: NEW, commit: {message: 'Smoother pulse', committer: {date: '2026-10-23T22:00:00Z'}}}})
+await ev(`${btn('UPDATE NOW')}.click()`)
+let upToDate = false
+for (let i = 0; i < 40 && !upToDate; i++) { await sleep(250); upToDate = (await text()).includes('You are up to date') }
+check('UPDATE NOW on an up-to-date box installs nothing and says so', upToDate)
 await tab('SYSTEM'); await sleep(300)
 await ev(`(()=>{const i=document.querySelectorAll('input[type=password]');const set=(e,v)=>{e.value=v;e.dispatchEvent(new Event('input'))};set(i[0],'correct horse battery');set(i[1],'short')})()`)
 await click('form .btn'); await sleep(700)
