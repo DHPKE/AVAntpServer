@@ -27,10 +27,14 @@ header h1{font-size:13px;font-weight:700;letter-spacing:.08em;border-left:3px so
 .full{grid-column:1/-1}
 .lbl{font-size:9px;font-weight:700;letter-spacing:.14em;color:var(--muted);text-transform:uppercase;margin-bottom:10px}
 .ring{width:84px;height:84px;border-radius:50%;border:3px solid;display:flex;align-items:center;justify-content:center;font-size:26px;margin:0 auto 10px}
-@keyframes ringBeat{0%{box-shadow:0 0 36px rgba(var(--accent-rgb),.75),0 0 10px rgba(var(--accent-rgb),.5)}100%{box-shadow:0 0 12px rgba(var(--accent-rgb),.16)}}
-.ring.ok{border-color:var(--ok);color:var(--ok);box-shadow:0 0 12px rgba(var(--accent-rgb),.16)}
-/* the script restarts this class on every full second: one flash per second, in step with the clock */
-.ring.ok.beat{animation:ringBeat 1s ease-out 1}
+/* a slow breath, not a flash: the glow swells and fades with ease-in-out on both halves, so it has no corners (a
+   linear rise and fall would look like a triangle). Starts and ends dark, so a restart every 2 s is seamless. */
+@keyframes ringBeat{
+  0%{box-shadow:0 0 10px rgba(var(--accent-rgb),.12),0 0 4px rgba(var(--accent-rgb),0)}
+  50%{box-shadow:0 0 40px rgba(var(--accent-rgb),.78),0 0 14px rgba(var(--accent-rgb),.5)}
+  100%{box-shadow:0 0 10px rgba(var(--accent-rgb),.12),0 0 4px rgba(var(--accent-rgb),0)}}
+.ring.ok{border-color:var(--ok);color:var(--ok);box-shadow:0 0 10px rgba(var(--accent-rgb),.12),0 0 4px rgba(var(--accent-rgb),0)}
+.ring.ok.beat{animation:ringBeat 2s ease-in-out 1}
 @media (prefers-reduced-motion:reduce){.ring.ok.beat{animation:none}}
 .ring.bad{border-color:var(--red);color:var(--red)}.ring.warn{border-color:var(--yellow);color:var(--yellow)}
 .sname{text-align:center;font-size:16px;font-weight:700;letter-spacing:.1em}

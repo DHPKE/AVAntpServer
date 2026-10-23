@@ -78,15 +78,24 @@ createApp({setup() {
     logTimer = setInterval(() => { if (logSel.auto && !document.hidden) loadLog() }, 3000)
   }
   function stopLog() { clearInterval(logTimer); logTimer = null }
-  // ---- the SYNCED icon flashes once per second, started on the full second of the (server-corrected) clock
+  // ---- the SYNCED icon breathes once every 2 seconds. The cycle is restarted on every odd second of the (server-corrected)
+  // clock, so the glow peaks one second later, on the even second. It is restarted rather than left running forever
+  // because a long-running CSS animation starts at the next drawn frame and then keeps that lag.
+  const BEAT_PERIOD = 2000, BEAT_PHASE = 1000
   let beatTimer = null
   const reduceMotion = () => { try { return matchMedia('(prefers-reduced-motion: reduce)').matches } catch (_) { return false } }
+  function scheduleBeat() {
+    const t = Date.now() + skew.value
+    let wait = (((BEAT_PHASE - t) % BEAT_PERIOD) + BEAT_PERIOD) % BEAT_PERIOD
+    if (wait < 20) wait += BEAT_PERIOD                                  // never fire twice for the same boundary
+    beatTimer = setTimeout(beat, wait + 2)
+  }
   function beat() {
     const r = document.querySelector('.ring.ok')
     if (r && !document.hidden && !reduceMotion()) { r.classList.remove('beat'); void r.offsetWidth; r.classList.add('beat') }
-    beatTimer = setTimeout(beat, 1000 - ((Date.now() + skew.value) % 1000) + 2)     // next full second (+2 ms: never fire just before it)
+    scheduleBeat()
   }
-  function startBeat() { if (!beatTimer) beat() }
+  function startBeat() { if (!beatTimer) scheduleBeat() }
   function stopBeat() { clearTimeout(beatTimer); beatTimer = null }
   function stop() { timers.forEach(clearInterval); timers = []; stopLive(); stopBeat(); stopLog() }
   async function doLogin() {

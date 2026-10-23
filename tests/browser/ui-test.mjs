@@ -137,20 +137,31 @@ const top = await ev(`(() => { const cs = [...document.querySelectorAll('.grid >
 check('top row order: Sync state (left), Current time (centre), Accuracy (right)', JSON.stringify(top.titles) === JSON.stringify(['Sync state', 'Current time', 'Accuracy']) && top.x[0] < top.x[1] && top.x[1] < top.x[2] && new Set(top.y).size === 1, JSON.stringify(top))
 check('... each box is a third of the width', top.w.every(x => Math.abs(x - (top.total - 32 - 24) / 3) < 6) && Math.max(...top.w) - Math.min(...top.w) <= 2, JSON.stringify(top))
 check('System offset and Root distance are one box: offset, RMS, skew, root delay and dispersion together', await ev(`(() => { const c = [...document.querySelectorAll('.grid > .card')][2].textContent; return ['system offset', 'RMS offset', 'Skew', 'Root delay', 'Root dispersion'].every(k => c.includes(k)) })()`) && !(await text()).includes('ROOT DISTANCE'))
-// the SYNCED icon flashes once per second, on the full second of the clock, and stays still for "reduce motion"
-await ev(`window.__beats = []; new MutationObserver(ms => ms.forEach(m => { if (m.target.classList.contains('beat') && !(m.oldValue || '').split(' ').includes('beat')) window.__beats.push(Date.now() % 1000) }))
+// the SYNCED icon breathes once every 2 seconds, on the clock, with a smooth curve, and stays still for "reduce motion"
+await ev(`window.__beats = []; new MutationObserver(ms => ms.forEach(m => { if (m.target.classList.contains('beat') && !(m.oldValue || '').split(' ').includes('beat')) window.__beats.push(Date.now() % 2000) }))
   .observe(document.querySelector('.ring'), {attributes: true, attributeFilter: ['class'], attributeOldValue: true})`)
-await sleep(4600)
+await sleep(6300)
 const beats = await ev(`window.__beats`)
-const circ = (a, b) => { const d = Math.abs(a - b) % 1000; return Math.min(d, 1000 - d) }
-check('SYNCED icon: flashes once per second (4-5 flashes in 4.6 s)', beats.length >= 4 && beats.length <= 5, JSON.stringify(beats))
-check('... each flash starts on the full second of the clock (within 60 ms)', beats.length >= 4 && beats.every(b => circ(b, 0) < 60), JSON.stringify(beats))
-check('... with a 1 s glow animation that decays and runs once', await ev(`(() => { const cs = getComputedStyle(document.querySelector('.ring')); return cs.animationName === 'ringBeat' && cs.animationDuration === '1s' && cs.animationIterationCount === '1' })()`))
+const circ = (a, b, m) => { const d = Math.abs(a - b) % m; return Math.min(d, m - d) }
+check('SYNCED icon: one pulse every 2 seconds (3 in 6.3 s)', beats.length >= 2 && beats.length <= 4, JSON.stringify(beats))
+check('... each cycle starts on an odd second, so the glow peaks on the even second (within 60 ms)', beats.length >= 2 && beats.every(b => circ(b, 1000, 2000) < 60), JSON.stringify(beats))
+check('... the animation is 2 s long, runs once per restart, with ease-in-out', await ev(`(() => { const cs = getComputedStyle(document.querySelector('.ring')); return cs.animationName === 'ringBeat' && cs.animationDuration === '2s' && cs.animationIterationCount === '1' && cs.animationTimingFunction === 'ease-in-out' })()`))
+// measure the glow along the cycle on a throw-away copy: smooth bell, not a triangle
+const curve = await ev(`(() => { const el = document.createElement('div'); el.className = 'ring ok beat'; el.style.cssText = 'position:fixed;left:-300px;top:0'; document.body.appendChild(el);
+  const a = el.getAnimations()[0]; a.pause();
+  const blur = t => { a.currentTime = t; const sh = getComputedStyle(el).boxShadow; return parseFloat(sh.slice(sh.indexOf(')') + 1).trim().split(' ')[2]) };
+  const ts = [0, 250, 500, 750, 900, 1000, 1100, 1250, 1500, 1750, 2000], r = ts.map(t => [t, +blur(t).toFixed(2)]); el.remove(); return r })()`)
+const at = t => curve.find(c => c[0] === t)[1]
+const lo = at(0), hi = at(1000), lin = f => lo + (hi - lo) * f
+check('pulse shape: dark at the start and at the end, brightest in the middle', Math.abs(at(2000) - lo) < 0.5 && hi > lo + 20 && curve.every(c => c[1] <= hi + 0.01), JSON.stringify(curve))
+check('pulse shape: symmetric (rise and fall mirror each other within 1 px)', [250, 500, 750].every(t => Math.abs(at(t) - at(2000 - t)) < 1.0), JSON.stringify(curve))
+check('pulse shape: eased, not linear (a quarter of the way up it has risen far less than a quarter)', at(250) < lin(0.25 / 1) - 0 && at(250) - lo < 0.18 * (hi - lo) && at(500) > lin(0.4) && at(500) < lin(0.6), JSON.stringify(curve))
+check('pulse shape: round top, no corner (the last 100 ms before the peak change by under 3% of the swing)', hi - at(900) < 0.03 * (hi - lo), JSON.stringify(curve))
 await send('Emulation.setEmulatedMedia', {features: [{name: 'prefers-reduced-motion', value: 'reduce'}]}); await sleep(300)
-await ev(`window.__beats = []`); await sleep(2300)
-check('... and does not flash when the user asked for reduced motion', (await ev(`window.__beats`)).length === 0 && (await ev(`getComputedStyle(document.querySelector('.ring')).animationName`)) === 'none')
-await send('Emulation.setEmulatedMedia', {features: [{name: 'prefers-reduced-motion', value: 'no-preference'}]}); await sleep(1300)
-check('... and flashes again when that is switched off', (await ev(`window.__beats`)).length >= 1)
+await ev(`window.__beats = []`); await sleep(4300)
+check('... and does not pulse when the user asked for reduced motion', (await ev(`window.__beats`)).length === 0 && (await ev(`getComputedStyle(document.querySelector('.ring')).animationName`)) === 'none')
+await send('Emulation.setEmulatedMedia', {features: [{name: 'prefers-reduced-motion', value: 'no-preference'}]}); await sleep(2600)
+check('... and pulses again when that is switched off', (await ev(`window.__beats`)).length >= 1)
 check('current time card agrees with the sync state card (synchronised, not "not synchronised")', /Clock\s+synchronised/.test(t) && !/not synchronised/.test(t), t.slice(0, 300))
 check('current time card shows a UTC clock', /Current time[\s\S]*\d\d:\d\d:\d\d[\s\S]*UTC/i.test(t) && /\d{4}-\d\d-\d\d/.test(t), t.slice(0, 200))
 let tcSeen = false
