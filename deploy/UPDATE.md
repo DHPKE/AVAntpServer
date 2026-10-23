@@ -11,6 +11,7 @@ Its firewall blocks every download by design, so an update needs **Update mode**
    It installs nothing when you are already up to date. Do not use it while an APPLY waits for confirmation.
 
 Everything below is the same thing done by hand, and the way back if you need it.
+If an update fails, the Software card shows the reason; the details are in LOG -> source "Apply".
 
 ## By hand: every update (about 2 minutes)
 
