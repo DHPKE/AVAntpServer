@@ -224,6 +224,50 @@ class ChangedOnlyTest(unittest.TestCase):
         self.assertEqual(net, {"etc/systemd/network/30-avantp-enp3s0.10.network"})     # no WAN file, no other VLAN
         self.assertIn("etc/avantp/nftables.nft", self.ex.last_changed)                  # the firewall pins the address, so it changes too
 
+    def mtimes(self):
+        d = os.path.join(self.root, "etc/systemd/network")
+        return {n: os.stat(os.path.join(d, n)).st_mtime_ns for n in os.listdir(d)}
+
+    def test_unchanged_files_are_not_rewritten_so_networkd_sees_no_change(self):
+        self.run_apply(BASE)
+        before = self.mtimes()
+        time.sleep(0.05)
+        self.run_apply(BASE)
+        self.assertEqual(self.mtimes(), before)                       # not a single network file was touched
+        edited = copy.deepcopy(BASE)
+        edited["vlans"][0]["address"] = "10.10.10.3/24"
+        time.sleep(0.05)
+        self.run_apply(edited)
+        after = self.mtimes()
+        moved = {n for n in after if after[n] != before.get(n)}
+        self.assertEqual(moved, {"30-avantp-enp3s0.10.network"})       # only the edited VLAN's file
+
+    def test_a_rollback_does_not_touch_files_the_apply_never_changed(self):
+        self.run_apply(BASE)
+        before = self.mtimes()
+        time.sleep(0.05)
+        edited = copy.deepcopy(BASE)
+        edited["vlans"][0]["timecode"] = {"artnet": True, "mtc_rtp": False, "fps": 25}   # VLAN 10: only the firewall changes
+        json.dump(edited, open(os.path.join(self.p.data, "pending.json"), "w"))
+        self.assertEqual(apply.apply_once(self.p, self.ex, confirm_seconds=0.2, poll=0.02), "rolled-back")
+        self.assertEqual(self.mtimes(), before)                       # neither the apply nor its rollback touched the network
+        self.assertEqual(open(os.path.join(self.root, "etc/avantp/nftables.nft")).read().count("udp dport 6454"), 1)  # back to VLAN 20 only
+
+    def test_system_executor_leaves_the_network_alone_when_no_network_file_changed(self):
+        ex = apply.SystemExecutor(self.p)
+        ran = []
+        ex.sh = lambda *argv, check=True, timeout=60: ran.append(argv)
+        cfg = config.validate(copy.deepcopy(BASE))
+        ex.activate(cfg, [], False, {"etc/avantp/nftables.nft"})
+        self.assertEqual([a for a in ran if a[0] == "networkctl"], [])
+        self.assertIn(("nft", "-f", self.p.under("etc/avantp/nftables.nft")), ran)         # the firewall is still reloaded
+        ran.clear()
+        ex.rollback(False, cfg, {"etc/avantp/nftables.nft"})
+        self.assertEqual([a for a in ran if a[0] == "networkctl"], [])
+        ran.clear()
+        ex.activate(cfg, [], False, {"etc/systemd/network/30-avantp-enp3s0.10.network"})
+        self.assertEqual([a[:2] for a in ran if a[0] == "networkctl"], [("networkctl", "reload"), ("networkctl", "reconfigure")])
+
     def test_system_executor_reconfigures_only_changed_links(self):
         ex = apply.SystemExecutor(self.p)
         ran = []

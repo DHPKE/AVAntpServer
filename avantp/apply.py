@@ -87,9 +87,23 @@ def snapshot(paths, rels, snapdir):
     return meta
 
 
+def _same_as_snapshot(p, snapdir, rel, m):
+    if m["kind"] == "missing":
+        return not os.path.lexists(p)
+    if m["kind"] == "link":
+        return os.path.islink(p) and os.readlink(p) == m["target"]
+    try:
+        with open(p, "rb") as a, open(os.path.join(snapdir, "files", rel), "rb") as b:
+            return not os.path.islink(p) and a.read() == b.read()
+    except OSError:
+        return False
+
+
 def restore(paths, snapdir, meta):
     for rel, m in meta.items():
         p = paths.under(rel)
+        if _same_as_snapshot(p, snapdir, rel, m):     # untouched: keep its file time, so networkd does not notice anything
+            continue
         if os.path.lexists(p):
             os.unlink(p)
         if m["kind"] == "file":
@@ -196,7 +210,8 @@ def apply_once(paths, ex, confirm_seconds=CONFIRM_SECONDS, poll=0.5, now=time.ti
     set_status(paths, state="applying")
     try:
         for rel, text in files.items():
-            _write(paths.under(rel), text)
+            if rel in changed:            # an identical rewrite would still change the file time, and systemd-networkd then
+                _write(paths.under(rel), text)   # restarts every link (WAN lease, trunk, all VLANs) for nothing
         for rel in set(old_managed) - set(files):
             try:
                 os.unlink(paths.under(rel))
@@ -344,7 +359,9 @@ class SystemExecutor:
         for i in removed:
             self.sh("ip", "link", "delete", i, check=False)
         self.sh("systemctl", "enable", "--now", "systemd-resolved", "systemd-networkd")
-        self.sh("networkctl", "reload")
+        net_changed = takeover or any(r.startswith("etc/systemd/network/") for r in changed)
+        if net_changed:               # an apply that leaves the network files alone (e.g. Art-Net on) must not touch the network
+            self.sh("networkctl", "reload")
         names = ([cfg["wan"]["iface"], cfg["lan"]["iface"]] + [f"{cfg['lan']['iface']}.{v['id']}" for v in cfg["vlans"]]
                  if takeover else sorted(self.links_of(changed, cfg)))
         for n in names:
@@ -372,7 +389,7 @@ class SystemExecutor:
             self.sh("systemctl", "enable", "networking", check=False)
             self.sh("ip", "addr", "flush", "dev", (old_cfg or {}).get("wan", {}).get("iface", "enp4s0"), check=False)
             self.sh("systemctl", "restart", "networking", check=False)
-        else:
+        elif any(r.startswith("etc/systemd/network/") for r in changed):
             self.sh("networkctl", "reload", check=False)
             for n in sorted(self.links_of(changed, old_cfg or {"wan": {"iface": "enp4s0"}, "lan": {"iface": "enp3s0"}})):
                 self.sh("networkctl", "reconfigure", n, check=False)
