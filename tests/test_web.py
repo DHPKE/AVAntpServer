@@ -143,6 +143,24 @@ class WebTest(unittest.TestCase):
         for f in ("pending.json", "config.json", "apply.request"):
             os.unlink(os.path.join(self.dir, f))
 
+    def test_timecode_status_endpoint(self):
+        _, ck, csrf = self.login()
+        self.assertEqual(self.req("GET", "/api/timecode")[0], 401)
+        path = self.app.tc_status
+        if os.path.exists(path):
+            os.unlink(path)
+        d = self.req("GET", "/api/timecode", cookie=ck)[1]
+        self.assertEqual((d["running"], d["vlans"]), (False, []))                         # no service, no file
+        json.dump({"time": time.time(), "vlans": [{"id": 20, "artnet": {"state": "sending"}}]}, open(path, "w"))
+        d = self.req("GET", "/api/timecode", cookie=ck)[1]
+        self.assertTrue(d["running"])
+        self.assertEqual(d["vlans"][0]["artnet"]["state"], "sending")
+        json.dump({"time": time.time() - 30, "vlans": []}, open(path, "w"))
+        self.assertFalse(self.req("GET", "/api/timecode", cookie=ck)[1]["running"])      # stale file = service is dead
+        open(path, "w").write("garbage")
+        self.assertFalse(self.req("GET", "/api/timecode", cookie=ck)[1]["running"])
+        os.unlink(path)
+
     def test_update_mode_endpoint(self):
         _, ck, csrf = self.login()
         self.assertEqual(self.req("POST", "/api/update-mode", {"on": True})[0], 401)

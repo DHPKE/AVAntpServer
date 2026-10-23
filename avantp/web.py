@@ -33,11 +33,12 @@ def version():
 
 
 class App:
-    def __init__(self, data_dir, tls, etc_dir=None, run_dir=None):
+    def __init__(self, data_dir, tls, etc_dir=None, run_dir=None, tc_status=None):
         self.dir = data_dir
         self.etc = etc_dir or data_dir   # root-owned: the active config
         self.run = run_dir or data_dir   # root-owned: the helper's status
         self.tls = tls
+        self.tc_status = tc_status or os.path.join(data_dir, "timecode-status.json")
         self.users = auth.Users(os.path.join(data_dir, "users.json"))
         self.sessions = auth.Sessions()
         self.lock = threading.Lock()
@@ -51,6 +52,16 @@ class App:
 
     def active(self):
         return self._read("config.json", self.etc)
+
+    def timecode_status(self):
+        """What the timecode service reports; it counts as running only if it wrote the file in the last 5 seconds."""
+        try:
+            with open(self.tc_status) as f:
+                st = json.load(f)
+        except (OSError, ValueError):
+            return {"running": False, "vlans": []}
+        st["running"] = time.time() - st.get("time", 0) < 5
+        return st
 
     def update_status(self):
         st = self._read("update.json", self.run) or {"state": "off"}
@@ -139,6 +150,8 @@ def make_handler(app):
                 return self.send(200, app.apply_status())
             if path == "/api/update-mode":
                 return self.send(200, app.update_status())
+            if path == "/api/timecode":
+                return self.send(200, app.timecode_status())
             self.err(404, "not found")
 
         def do_POST(self):
@@ -222,8 +235,8 @@ def make_handler(app):
     return H
 
 
-def serve(data_dir, host, port, certfile=None, keyfile=None, etc_dir=None, run_dir=None):
-    app = App(data_dir, tls=bool(certfile), etc_dir=etc_dir, run_dir=run_dir)
+def serve(data_dir, host, port, certfile=None, keyfile=None, etc_dir=None, run_dir=None, tc_status=None):
+    app = App(data_dir, tls=bool(certfile), etc_dir=etc_dir, run_dir=run_dir, tc_status=tc_status)
     srv = http.server.ThreadingHTTPServer((host, port), make_handler(app))
     if certfile:
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)

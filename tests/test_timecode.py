@@ -1,0 +1,225 @@
+import copy
+import datetime
+import json
+import os
+import socket
+import tempfile
+import time
+import unittest
+
+from avantp import config, timecode as tcm
+from tests.test_avantp import BASE
+
+
+def utc(*a):
+    return datetime.datetime(*a, tzinfo=datetime.timezone.utc).timestamp()
+
+
+class TimeMath(unittest.TestCase):
+    def test_time_of_day_per_zone_including_daylight_saving(self):
+        e = utc(2026, 10, 23, 12, 0, 0)                                        # Berlin and New York are on summer time
+        self.assertEqual(tcm.timecode_at(e, "UTC", 25), (12, 0, 0, 0))
+        self.assertEqual(tcm.timecode_at(e, "Europe/Berlin", 25), (14, 0, 0, 0))
+        self.assertEqual(tcm.timecode_at(e, "America/New_York", 25), (8, 0, 0, 0))
+        self.assertEqual(tcm.timecode_at(e, "Asia/Kathmandu", 25), (17, 45, 0, 0))   # +05:45
+        w = utc(2026, 12, 23, 12, 0, 0)                                        # winter: Berlin +1, New York -5
+        self.assertEqual(tcm.timecode_at(w, "Europe/Berlin", 25)[0], 13)
+        self.assertEqual(tcm.timecode_at(w, "America/New_York", 25)[0], 7)
+
+    def test_the_dst_changeover_moves_the_clock_by_an_hour(self):
+        before = utc(2026, 10, 25, 0, 59, 59)                                  # 02:59:59 CEST
+        after = utc(2026, 10, 25, 1, 0, 0)                                     # 02:00:00 CET again
+        self.assertEqual(tcm.timecode_at(before, "Europe/Berlin", 25)[:3], (2, 59, 59))
+        self.assertEqual(tcm.timecode_at(after, "Europe/Berlin", 25)[:3], (2, 0, 0))
+
+    def test_frames_follow_the_frame_rate(self):
+        base = utc(2026, 10, 23, 12, 0, 0)
+        for fps, rate in ((24, 24), (25, 25), (30, 30)):
+            self.assertEqual(tcm.timecode_at(base + 0.5, "UTC", fps)[3], rate // 2, fps)       # half a second in
+            self.assertEqual(tcm.timecode_at(base + 0.999, "UTC", fps)[3], rate - 1, fps)      # never reaches `rate`
+        self.assertEqual(tcm.timecode_at(base, "UTC", 29.97)[:3], (12, 0, 0))
+
+    def test_drop_frame_labels(self):
+        self.assertEqual(tcm.drop_frame(0), (0, 0, 0, 0))
+        self.assertEqual(tcm.drop_frame(1798), (0, 0, 59, 28))
+        self.assertEqual(tcm.drop_frame(1799), (0, 0, 59, 29))
+        self.assertEqual(tcm.drop_frame(1800), (0, 1, 0, 2))                  # frames 0 and 1 are skipped
+        self.assertEqual(tcm.drop_frame(17982), (0, 10, 0, 0))                # but not every tenth minute
+        self.assertEqual(tcm.drop_frame(17982 * 6)[:2], (1, 0))               # an hour of 29.97 fps is 107892 frames
+        self.assertEqual(tcm.drop_frame(17982 * 6 * 24 - 1)[0], 23)
+
+    def test_every_frame_of_a_second_is_labelled_exactly_once_at_every_rate(self):
+        base = utc(2026, 10, 23, 12, 0, 0)
+        for fps in (24, 25, 30, 29.97):
+            rate = tcm.FRAME_RATE[fps]
+            labels = [tcm.timecode_at(base + (k + 0.0) / rate + 1e-4, "UTC", fps) for k in range(int(rate * 3))]
+            self.assertEqual(len(set(labels)), len(labels), f"{fps} fps: a frame label repeated")
+            if fps == 29.97:      # drop-frame counts 29.97 frames/s and so drifts up to a couple of frames from the wall clock
+                self.assertEqual(labels[0][:3], (12, 0, 0))
+                self.assertLessEqual(labels[0][3], 2)
+            else:
+                self.assertEqual(labels[0], (12, 0, 0, 0))
+
+    def test_artnet_packet_layout(self):
+        p = tcm.artnet_packet(13, 5, 21, 7, 25)
+        self.assertEqual(len(p), 19)
+        self.assertEqual(p[:8], b"Art-Net\x00")
+        self.assertEqual(p[8:10], bytes([0x00, 0x97]))                        # OpCode 0x9700, low byte first
+        self.assertEqual(p[10:12], bytes([0, 14]))                            # protocol version 14
+        self.assertEqual(p[14:19], bytes([7, 21, 5, 13, 1]))                  # frames, seconds, minutes, hours, type 1 = 25 fps
+        for fps, typ in ((24, 0), (25, 1), (29.97, 2), (30, 3)):
+            self.assertEqual(tcm.artnet_packet(0, 0, 0, 0, fps)[18], typ)
+
+
+class AddressTest(unittest.TestCase):
+    def test_broadcast_is_derived_when_the_kernel_has_none(self):
+        from unittest import mock
+        js = json.dumps([
+            {"ifname": "lo", "addr_info": [{"family": "inet", "local": "127.0.0.1", "prefixlen": 8, "broadcast": "127.255.255.255"}]},
+            {"ifname": "enp3s0.20", "addr_info": [{"family": "inet", "local": "10.20.0.2", "prefixlen": 24}]},
+            {"ifname": "enp3s0.30", "addr_info": [{"family": "inet", "local": "10.3.10.1", "prefixlen": 19, "broadcast": "10.3.31.255"}]},
+            {"ifname": "ppp0", "addr_info": [{"family": "inet", "local": "10.0.0.1", "prefixlen": 32}]},
+            {"ifname": "x", "addr_info": [{"family": "inet6", "local": "fe80::1", "prefixlen": 64}]}])
+        with mock.patch("avantp.timecode.subprocess.run", return_value=mock.Mock(stdout=js)):
+            a = tcm.vlan_addresses()
+        self.assertEqual(a["enp3s0.20"], ("10.20.0.2", "10.20.0.255"))                   # derived
+        self.assertEqual(a["enp3s0.30"], ("10.3.10.1", "10.3.31.255"))                   # as reported
+        self.assertNotIn("ppp0", a)                                                       # a /32 has no broadcast
+        self.assertNotIn("x", a)
+        with mock.patch("avantp.timecode.subprocess.run", side_effect=FileNotFoundError):
+            self.assertEqual(tcm.vlan_addresses(), {})
+
+
+class SenderTest(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.cfg_path = os.path.join(self.dir, "config.json")
+        self.status = os.path.join(self.dir, "status.json")
+        self.rx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.rx.bind(("127.0.0.1", 0))
+        self.rx.settimeout(0.05)
+        self.port = self.rx.getsockname()[1]
+
+    def tearDown(self):
+        self.rx.close()
+
+    def write_cfg(self, mutate=None):
+        c = copy.deepcopy(BASE)
+        for v in c["vlans"]:
+            v["timecode"] = {"artnet": False, "mtc_rtp": False, "fps": 25}
+        if mutate:
+            mutate(c)
+        json.dump(config.dump(config.validate(c)), open(self.cfg_path, "w"))
+
+    def packets(self, secs):
+        out, end = [], time.time() + secs
+        while time.time() < end:
+            yield_ = None
+            try:
+                yield_ = self.rx.recv(100)
+            except socket.timeout:
+                pass
+            if yield_:
+                out.append(yield_)
+        return out
+
+    def run_sender(self, s, secs):
+        got, end = [], time.time() + secs
+        while time.time() < end:
+            s.tick()
+            try:
+                while True:
+                    got.append(self.rx.recv(100))
+            except socket.timeout:
+                pass
+            time.sleep(0.005)
+        return got
+
+    def test_nothing_is_sent_while_every_toggle_is_off(self):
+        self.write_cfg()
+        s = tcm.Sender(self.cfg_path, self.status, dest_override=("127.0.0.1", "127.0.0.1", self.port))
+        self.assertEqual(self.run_sender(s, 0.5), [])
+        st = json.load(open(self.status))
+        self.assertTrue(all(v["artnet"]["state"] == "off" and v["mtc_rtp"]["state"] == "off" for v in st["vlans"]))
+
+    def test_one_packet_per_frame_in_the_vlans_own_time_zone(self):
+        def mutate(c):
+            c["vlans"][1]["timecode"] = {"artnet": True, "mtc_rtp": False, "fps": 25}        # VLAN 20, New York
+        self.write_cfg(mutate)
+        s = tcm.Sender(self.cfg_path, self.status, dest_override=("127.0.0.1", "127.0.0.1", self.port))
+        t0 = time.time()
+        got = self.run_sender(s, 1.0)
+        n = len(got)
+        self.assertTrue(20 <= n <= 30, f"expected about 25 packets in 1 s, got {n}")
+        ny = datetime.datetime.fromtimestamp(t0, __import__("zoneinfo").ZoneInfo("America/New_York"))
+        first = got[0]
+        self.assertEqual(first[:8], b"Art-Net\x00")
+        self.assertEqual(first[17], ny.hour)                                              # hours field = New York's hour
+        frames = [p[14] for p in got]
+        for a, b in zip(frames, frames[1:]):
+            self.assertIn((b - a) % 25, (1, 2), "frames must advance one at a time (a late tick may skip one)")
+        s.write_status(force=True)                         # the service refreshes this file about once a second
+        st = json.load(open(self.status))
+        v = [x for x in st["vlans"] if x["id"] == 20][0]
+        self.assertEqual(v["artnet"]["state"], "sending")
+        self.assertEqual(v["artnet"]["fps"], 25)
+        self.assertEqual(v["artnet"]["sent"], n)
+        self.assertEqual(v["artnet"]["dest"], f"127.0.0.1:{self.port}")
+        self.assertRegex(v["artnet"]["last"], r"^\d\d:\d\d:\d\d:\d\d$")
+        self.assertEqual([x["artnet"]["state"] for x in st["vlans"] if x["id"] != 20], ["off", "off"])
+
+    def test_mtc_is_reported_as_not_implemented_not_faked(self):
+        self.write_cfg(lambda c: c["vlans"][0]["timecode"].update(mtc_rtp=True))
+        s = tcm.Sender(self.cfg_path, self.status, dest_override=("127.0.0.1", "127.0.0.1", self.port))
+        s.tick()
+        s.write_status(force=True)
+        v = [x for x in json.load(open(self.status))["vlans"] if x["id"] == 10][0]
+        self.assertEqual(v["mtc_rtp"]["state"], "not-implemented")
+        self.assertEqual(self.run_sender(s, 0.2), [])                                      # and nothing goes out
+
+    def test_waits_for_an_address_on_dhcp_vlans(self):
+        self.write_cfg(lambda c: c["vlans"][1]["timecode"].update(artnet=True))
+        s = tcm.Sender(self.cfg_path, self.status, addresses=lambda: {})
+        s.tick()
+        s.write_status(force=True)
+        v = [x for x in json.load(open(self.status))["vlans"] if x["id"] == 20][0]
+        self.assertEqual(v["artnet"]["state"], "no-address")
+        s.addresses = lambda: {"enp3s0.20": ("127.0.0.1", "127.0.0.1")}                    # the lease arrives
+        s.addr_at = 0
+        s.dest_override = None
+        orig = tcm.ARTNET_PORT
+        tcm.ARTNET_PORT = self.port
+        try:
+            self.run_sender(s, 0.3)
+        finally:
+            tcm.ARTNET_PORT = orig
+        s.write_status(force=True)
+        v = [x for x in json.load(open(self.status))["vlans"] if x["id"] == 20][0]
+        self.assertEqual(v["artnet"]["state"], "sending")
+
+    def test_a_changed_config_is_picked_up_without_restart(self):
+        self.write_cfg()
+        s = tcm.Sender(self.cfg_path, self.status, dest_override=("127.0.0.1", "127.0.0.1", self.port))
+        self.assertEqual(self.run_sender(s, 0.2), [])
+        time.sleep(0.05)
+        self.write_cfg(lambda c: c["vlans"][1]["timecode"].update(artnet=True, fps=30))
+        os.utime(self.cfg_path, (time.time() + 5, time.time() + 5))
+        got = self.run_sender(s, 0.6)
+        self.assertGreater(len(got), 10)
+        self.assertEqual(got[0][18], 3)                                                    # now 30 fps
+        self.write_cfg()                                                                   # switched off again
+        os.utime(self.cfg_path, (time.time() + 10, time.time() + 10))
+        self.run_sender(s, 0.1)
+        self.assertEqual(self.run_sender(s, 0.3), [])
+
+    def test_a_broken_config_keeps_the_last_good_one(self):
+        self.write_cfg(lambda c: c["vlans"][1]["timecode"].update(artnet=True))
+        s = tcm.Sender(self.cfg_path, self.status, dest_override=("127.0.0.1", "127.0.0.1", self.port))
+        self.assertGreater(len(self.run_sender(s, 0.3)), 3)
+        open(self.cfg_path, "w").write("{ not json")
+        os.utime(self.cfg_path, (time.time() + 5, time.time() + 5))
+        self.assertGreater(len(self.run_sender(s, 0.3)), 3)
+
+
+if __name__ == "__main__":
+    unittest.main()

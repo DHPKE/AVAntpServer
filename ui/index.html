@@ -22,7 +22,7 @@ header h1{font-size:13px;font-weight:700;letter-spacing:.08em;border-left:3px so
 .tab-nav{display:flex;gap:1px;background:var(--border);border-radius:8px;padding:1px}
 .tab-btn{padding:4px 14px;border-radius:7px;border:none;background:transparent;color:var(--muted);cursor:pointer;font-size:10px;font-weight:700;letter-spacing:.1em;font-family:inherit}
 .tab-btn.active{background:var(--surface);color:var(--text);box-shadow:inset 0 -2px 0 var(--accent)}
-.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;padding:16px}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;padding:16px}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;overflow:auto}
 .full{grid-column:1/-1}
 .lbl{font-size:9px;font-weight:700;letter-spacing:.14em;color:var(--muted);text-transform:uppercase;margin-bottom:10px}
@@ -31,6 +31,8 @@ header h1{font-size:13px;font-weight:700;letter-spacing:.08em;border-left:3px so
 .ring.bad{border-color:var(--red);color:var(--red)}.ring.warn{border-color:var(--yellow);color:var(--yellow)}
 .sname{text-align:center;font-size:16px;font-weight:700;letter-spacing:.1em}
 .smeta{text-align:center;font-size:10px;color:var(--muted);margin-top:3px}
+.tclock{font-size:32px;font-weight:700;letter-spacing:.04em;color:var(--ok);text-align:center;font-variant-numeric:tabular-nums;padding-top:6px}
+.tdate{font-size:10px;color:var(--muted);text-align:center;margin-top:4px}
 .big{font-size:34px;font-weight:700;letter-spacing:-.02em;line-height:1}.bigunit{font-size:15px;font-weight:400;margin-left:3px}
 .bigsub{font-size:10px;color:var(--muted);margin-top:5px}
 .good{color:var(--ok)}.warnc{color:var(--yellow)}.badc{color:var(--red)}
@@ -61,7 +63,8 @@ textarea{resize:vertical;min-height:70px}
 .actions{padding:0 16px 16px;display:flex;gap:10px;align-items:center}
 .login{max-width:340px;margin:12vh auto;padding:0 16px}
 .badge{display:inline-block;padding:2px 7px;border-radius:4px;background:rgba(var(--accent-rgb),.18);color:var(--accent);font-size:9px;font-weight:700}
-@media(max-width:900px){.grid,.sform{grid-template-columns:1fr}}
+@media(max-width:1100px){.grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:700px){.grid,.sform{grid-template-columns:1fr}}
 input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
 </style>
 </head>
@@ -105,6 +108,14 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
   <!-- MONITOR -->
   <div class="grid" v-if="tab==='monitor'">
     <div class="card">
+      <div class="lbl">Current time</div>
+      <div class="tclock">{{ utcNow }}</div>
+      <div class="tdate">{{ utcDate }} &middot; UTC</div>
+      <div class="div"></div>
+      <div class="cr"><span class="ck">Clock</span><span class="cv" :class="syncTxt">{{ chronyRunning ? (synced ? 'synchronised' : 'not synchronised') : 'chrony stopped' }}</span></div>
+      <div class="cr"><span class="ck">Source</span><span class="cv">{{ tr ? (tr.ref_host || tr.ref_name) : '—' }}</span></div>
+    </div>
+    <div class="card">
       <div class="lbl">Sync state</div>
       <div class="ring" :class="syncCls">{{ syncIcon }}</div>
       <div class="sname" :class="syncTxt">{{ syncName }}</div>
@@ -131,13 +142,23 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
     </div>
     <div class="card full">
       <div class="lbl">VLAN clocks<span v-if="!cfg.active" style="text-transform:none;letter-spacing:0"> &middot; showing the saved config, nothing is applied yet</span></div>
-      <table v-if="cfgVlans.length"><thead><tr><th>VLAN</th><th>Name</th><th>IP address</th><th>Local time</th><th>Time zone</th><th>NTP</th><th>Timecode</th></tr></thead>
+      <table v-if="cfgVlans.length"><thead><tr><th>VLAN</th><th>Name</th><th>IP address</th><th>Local time</th><th>Time zone</th><th>NTP</th></tr></thead>
         <tbody><tr v-for="v in cfgVlans" :key="v.id">
           <td>{{ v.id }}</td><td>{{ v.name }}</td><td :class="vlanAddr(v).live ? '' : 'warnc'">{{ vlanAddr(v).text }}</td>
           <td class="good">{{ localTime(v.timezone) }}</td><td>{{ tzLabel(v.timezone) }}</td>
-          <td>{{ v.ntp!==false ? 'serving' : 'off' }}</td>
-          <td>{{ tcText(v) }}</td></tr></tbody></table>
+          <td>{{ v.ntp!==false ? 'serving' : 'off' }}</td></tr></tbody></table>
       <div v-else class="smeta" style="text-align:left">No VLANs configured yet. Create them in the VLANS tab.</div>
+    </div>
+    <div class="card full">
+      <div class="lbl">Timecode<span v-if="!tc.running" style="text-transform:none;letter-spacing:0;color:var(--yellow)"> &middot; the timecode service is not running</span></div>
+      <table v-if="cfgVlans.length"><thead><tr><th>VLAN</th><th>Name</th><th>Art-Net timecode</th><th>Last sent</th><th>Packets</th><th>MTC over RTP-MIDI</th></tr></thead>
+        <tbody><tr v-for="v in cfgVlans" :key="v.id">
+          <td>{{ v.id }}</td><td>{{ v.name }}</td>
+          <td :class="tcCls(v).artnet">{{ tcText(v).artnet }}</td>
+          <td class="good">{{ tcStat(v).artnet.last || '' }}</td><td>{{ tcStat(v).artnet.state === 'sending' ? tcStat(v).artnet.sent : '' }}</td>
+          <td :class="tcCls(v).mtc">{{ tcText(v).mtc }}</td></tr></tbody></table>
+      <div v-else class="smeta" style="text-align:left">No VLANs configured yet.</div>
+      <div class="smeta" style="text-align:left;margin-top:8px">Timecode is the time of day in each VLAN's own time zone, sent once per frame. It is off unless you switch it on for a VLAN.</div>
     </div>
     <div class="card full">
       <div class="lbl">Upstream sources</div>

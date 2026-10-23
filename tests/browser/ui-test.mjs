@@ -2,9 +2,11 @@
 // Needs: a server started with fake chronyc/ip on PATH and AVANTP_ALLOW_HTTP=1 on 127.0.0.1:8765, user admin / "correct horse battery".
 //   export AVANTP_DIR=<dir with users.json> AVANTP_CONFIRM_SECONDS=4 PATH=tests/browser/fakebin:$PATH
 //   python3 -m avantp apply --fake --watch &        # development helper: records instead of touching the system
+//   AVANTP_TC_DEST=127.0.0.1,127.0.0.1,16454 python3 -m avantp timecode &   # the Art-Net sender, aimed at this test
 //   AVANTP_ALLOW_HTTP=1 python3 -m avantp web 127.0.0.1 8765
 //   node tests/browser/ui-test.mjs <screenshot-dir>
 import { spawn } from 'node:child_process'
+import dgram from 'node:dgram'
 import { writeFileSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -31,6 +33,8 @@ const ev = async js => { const r = await send('Runtime.evaluate', {expression: j
 const shot = async name => { const r = await send('Page.captureScreenshot', {format: 'png'}); writeFileSync(`${S}/shot-${name}.png`, Buffer.from(r.result.data, 'base64')) }
 const text = () => ev('document.body.innerText')
 const results = []
+const artnet = []                                   // what the Art-Net sender really transmits
+const udp = dgram.createSocket('udp4'); udp.on('message', m => artnet.push(m)); udp.bind(16454, '127.0.0.1')
 const check = (name, ok, extra = '') => { results.push(ok); console.log((ok ? 'PASS ' : 'FAIL ') + name + (ok ? '' : '  -> ' + extra)) }
 const setVal = (sel, v) => ev(`(()=>{const e=document.querySelector(${JSON.stringify(sel)});e.value=${JSON.stringify(v)};e.dispatchEvent(new Event(e.tagName==='SELECT'?'change':'input'));return true})()`)
 const click = sel => ev(`document.querySelector(${JSON.stringify(sel)}).click()`)
@@ -121,7 +125,15 @@ await tab('MONITOR'); await sleep(2500)
 t = await text()
 check('VLAN clocks table shows VLANs with city time zones and current offsets', t.includes('Dante Prim (A–B)') && t.includes('show') && /Berlin \(UTC\+0[12]:00\)/.test(t) && /New York \(UTC−0[45]:00\)/.test(t), t.slice(300, 700))
 check('VLAN IPs shown from the live interfaces (static + DHCP lease)', t.includes('10.10.10.2/24') && t.includes('10.20.0.77/24'), t.slice(300, 700))
-check('timecode column: Art-Net on show', t.includes('Art-Net @25'))
+check('current time card agrees with the sync state card (synchronised, not "not synchronised")', /Clock\s+synchronised/.test(t) && !/not synchronised/.test(t), t.slice(0, 300))
+check('current time card shows a UTC clock', /Current time[\s\S]*\d\d:\d\d:\d\d[\s\S]*UTC/i.test(t) && /\d{4}-\d\d-\d\d/.test(t), t.slice(0, 200))
+let tcSeen = false
+for (let i = 0; i < 25 && !tcSeen; i++) { await sleep(400); tcSeen = (await text()).includes('sending 25 fps → 127.0.0.1:16454') }
+t = await text()
+check('timecode card: VLAN 20 is reported as really sending (from the sender service)', tcSeen, t.slice(t.indexOf('TIMECODE'), t.indexOf('TIMECODE') + 400))
+check('timecode card: VLANs with the toggle off say off, MTC says off', /Dante Prim[^\n]*off/.test(t) || t.includes('\toff'), '')
+check('the sender really transmits ArtTimeCode packets', artnet.length > 5 && artnet[0].subarray(0, 8).toString('latin1') === 'Art-Net\0' && artnet[0][9] === 0x97 && artnet[0].length === 19, `packets: ${artnet.length}`)
+check('timecode card shows the last sent timecode', /\d\d:\d\d:\d\d:\d\d/.test(t))
 await shot('5-monitor-vlans')
 
 await tab('SYSTEM'); await sleep(300)
@@ -138,5 +150,5 @@ await click('.sub .btn'); await sleep(800)
 t = await text(); check('logout returns to login', t.includes('LOGIN') && !t.includes('MONITOR'))
 const real = errors.filter(e => !/status of 40[0-9]/.test(e)); check('no JS errors (expected 400/401 from deliberate bad requests ignored)', real.length === 0, real.join(' | '))
 console.log(results.every(Boolean) ? 'ALL PASS' : 'SOME FAILED', `(${results.filter(Boolean).length}/${results.length})`)
-ws.close(); chrome.kill()
+udp.close(); ws.close(); chrome.kill()
 process.exit(results.every(Boolean) ? 0 : 1)

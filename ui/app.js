@@ -6,7 +6,7 @@ createApp({setup() {
   const user = ref(null), csrf = ref(''), needsSetup = ref(false), version = ref('')
   const lu = ref(''), lp = ref(''), loginErr = ref(''), busy = ref(false)
   const connected = ref(false), status = ref(null), skew = ref(0), now = ref(Date.now())
-  const cfg = ref({active: null, pending: null}), ap = ref({state: 'idle'}), um = ref({state: 'off'})
+  const cfg = ref({active: null, pending: null}), ap = ref({state: 'idle'}), um = ref({state: 'off'}), tc = ref({running: false, vlans: []})
   const draft = ref(null), up = reactive({default: '', backup: '', custom: ''}), baseline = ref('')
   const msg = ref(''), msgCls = ref('ok'), pw = reactive({old: '', new: ''})
   let timers = []
@@ -53,6 +53,7 @@ createApp({setup() {
       status.value = s; skew.value = s.utc * 1000 - Date.now(); connected.value = true
       ap.value = await api('GET', '/api/apply')
       um.value = await api('GET', '/api/update-mode')
+      tc.value = await api('GET', '/api/timecode')
     } catch (_) { connected.value = false }
   }
   const tr = computed(() => status.value && status.value.chrony.tracking)
@@ -122,10 +123,30 @@ createApp({setup() {
     if (nic && nic.addrs.length) return {live: true, text: nic.addrs.join(', ')}
     return {live: false, text: v.mode === 'static' ? v.address + ' (not active)' : 'DHCP: no lease'}
   }
+  const utcDate = computed(() => new Date(utcMs.value).toISOString().slice(0, 10))
+  const NOT = {state: 'off'}
+  const tcStat = v => {
+    const e = tc.value.vlans.find(x => x.id === v.id)
+    return e || {artnet: NOT, mtc_rtp: NOT}
+  }
+  // what the sender really reports; with the toggle on but no report, the service is not running
   function tcText(v) {
-    const t = v.timecode || {}, o = []
-    if (t.artnet) o.push('Art-Net'); if (t.mtc_rtp) o.push('MTC-RTP')
-    return o.length ? o.join(' + ') + ' @' + (t.fps || 25) : 'off'
+    const t = v.timecode || {}, r = tcStat(v)
+    const a = r.artnet || NOT
+    let artnet = 'off', mtc = 'off'
+    if (t.artnet) {
+      artnet = !tc.value.running ? 'service not running' :
+        a.state === 'sending' ? 'sending ' + (t.fps || 25) + ' fps \u2192 ' + a.dest :
+        a.state === 'no-address' ? 'waiting for an IP address' :
+        a.state === 'error' ? 'error: ' + a.error : 'starting\u2026'
+    }
+    if (t.mtc_rtp) mtc = 'enabled, but not implemented yet'
+    return {artnet, mtc}
+  }
+  function tcCls(v) {
+    const t = v.timecode || {}, a = tcStat(v).artnet || NOT
+    return {artnet: !t.artnet ? '' : (tc.value.running && a.state === 'sending') ? 'good' : a.state === 'error' ? 'badc' : 'warnc',
+            mtc: t.mtc_rtp ? 'warnc' : ''}
   }
 
   // ---- config
@@ -218,7 +239,7 @@ createApp({setup() {
 
   onMounted(start)
   onUnmounted(stop)
-  return {um, umLeftText, setUpdateMode, version, tabs, tab, user, needsSetup, lu, lp, loginErr, busy, connected, doLogin, doLogout, draft, up, msg, msgCls, pw,
+  return {synced, um, umLeftText, setUpdateMode, version, tabs, tab, user, needsSetup, lu, lp, loginErr, busy, connected, doLogin, doLogout, draft, up, msg, msgCls, pw,
     ap, left, recent, applyNow, confirm, cfg, shown, tr, chronyRunning, sources, ifaces, ifaceNames, syncCls, syncTxt, syncIcon, syncName, fmtS, off, offCls, utcNow,
-    tzLabel, tzGroups, localTime, tcText, vlanAddr, cfgVlans, hasPending, draftDirty, wanDns, addVlan, save, changePw}
+    tzLabel, tzGroups, localTime, tcText, tcCls, tcStat, tc, utcDate, vlanAddr, cfgVlans, hasPending, draftDirty, wanDns, addVlan, save, changePw}
 }}).mount('#app')

@@ -5,6 +5,7 @@ Run as root on Linux (needs iproute2, nftables, iputils-ping, python3):
     docker run --rm --privileged -v $PWD:/src:ro debian:trixie /src/tests/isolation/run.sh
 """
 import copy
+import datetime
 import json
 import os
 import subprocess
@@ -12,6 +13,7 @@ import sys
 import tempfile
 import threading
 import time
+import zoneinfo
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from avantp import apply, config, render  # noqa: E402
@@ -216,6 +218,55 @@ class NetnsExecutor(apply.SystemExecutor):
         return r
 
 
+RECEIVER = r'''
+import json, socket, struct, sys, time
+socks = {}
+for dev in ("lan0.10", "lan0.20"):
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.setsockopt(socket.SOL_SOCKET, 25, dev.encode() + b"\0")          # SO_BINDTODEVICE: one socket per VLAN
+    s.bind(("", 6454)); s.settimeout(0.05); socks[dev] = s
+got = {d: [] for d in socks}
+end = time.time() + float(sys.argv[1])
+while time.time() < end:
+    for d, s in socks.items():
+        try: got[d].append(s.recv(100).hex())
+        except socket.timeout: pass
+print(json.dumps(got))
+'''
+
+
+def artnet_tests(check, root):
+    cfg_dir = tempfile.mkdtemp()
+    both = copy.deepcopy(CFG)
+    both["vlans"][0]["timecode"] = {"artnet": True, "fps": 25}    # VLAN 10: sender ON, firewall rule OFF (CFG has none)
+    both["vlans"][1]["timecode"] = {"artnet": True, "fps": 25}    # VLAN 20: sender ON, firewall rule ON
+    both["vlans"][1]["timezone"] = "America/New_York"
+    json.dump(config.dump(config.validate(both)), open(f"{cfg_dir}/config.json", "w"))
+    open("/tmp/receiver.py", "w").write(RECEIVER)
+    rx = subprocess.Popen(["ip", "netns", "exec", "lanhost", "python3", "/tmp/receiver.py", "3"], stdout=subprocess.PIPE, text=True)
+    time.sleep(0.4)
+    code = ("import sys; sys.path.insert(0, '/work'); from avantp import timecode as t; import time\n"
+            f"s = t.Sender('{cfg_dir}/config.json', '{cfg_dir}/status.json'); end = time.time() + 2.0\n"
+            "while time.time() < end:\n    s.tick(); time.sleep(0.004)\n"
+            "s.write_status(force=True)\n")
+    r = subprocess.run(["ip", "netns", "exec", "box", "python3", "-c", code], capture_output=True, text=True)
+    out = json.loads(rx.communicate(timeout=10)[0])
+    status = json.load(open(f"{cfg_dir}/status.json"))
+    p20 = [bytes.fromhex(h) for h in out["lan0.20"]]
+    check("artnet: sender ran without errors", r.returncode, 0)
+    check("artnet: VLAN 20 host receives about 25 packets/s for 2 s", 40 <= len(p20) <= 55, True)
+    check("artnet: ... they are valid ArtTimeCode packets", all(p[:10] == b"Art-Net\x00\x00\x97" and len(p) == 19 for p in p20), True)
+    ny = datetime.datetime.now(zoneinfo.ZoneInfo("America/New_York"))
+    check("artnet: ... carrying New York's hour (the VLAN's time zone)", {p[17] for p in p20} <= {ny.hour, (ny.hour + 23) % 24}, True)
+    check("artnet: VLAN 10 sender is ON but its firewall rule is OFF: nothing gets out", len(out["lan0.10"]), 0)
+    st = {v["id"]: v["artnet"] for v in status["vlans"]}
+    check("artnet: status says sending on VLAN 20", st[20]["state"], "sending")
+    check("artnet: status shows the subnet broadcast as destination", st[20]["dest"], "10.20.0.255:6454")
+    check("artnet: status does not claim success on VLAN 10 forever (the packets left the sender, the kernel dropped them)",
+          st[10]["state"] in ("sending", "error"), True)
+
+
 def helper_tests(check, listener_ok):
     """Run apply_once against the live box namespace and look at the kernel afterwards."""
     root = tempfile.mkdtemp()
@@ -277,6 +328,9 @@ def helper_tests(check, listener_ok):
     threading.Thread(target=lambda: (time.sleep(0.5), open(os.path.join(p.data, "confirm"), "w").close()), daemon=True).start()
     apply.apply_once(p, ex, confirm_seconds=10, poll=0.1)
     check("update: a firewall reload (apply) also closes an open window", box_out("tcp", "10.99.0.1", 80, "wanpeer"), False)
+
+    print("--- Art-Net timecode sender (the real service code) through the real firewall")
+    artnet_tests(check, root)
 
     print("--- root helper with the real kernel: a later unconfirmed change restores the CONFIRMED ruleset")
     changed = copy.deepcopy(CFG)

@@ -1,0 +1,29 @@
+[Unit]
+Description=AVAntpServer timecode sender (Art-Net), unprivileged
+After=network.target chrony.service
+
+[Service]
+User=avantp
+Group=avantp
+Environment=PYTHONPATH=/opt/avantp
+ExecStart=/usr/bin/python3 -m avantp timecode
+Restart=always
+RestartSec=2
+RuntimeDirectory=avantp-timecode
+RuntimeDirectoryMode=0755
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

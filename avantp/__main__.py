@@ -28,6 +28,22 @@ def paths():
     return "/var/lib/avantp", "/etc/avantp", "/run/avantp"
 
 
+def run_timecode():
+    """Art-Net timecode sender (unprivileged service). Development: AVANTP_TC_DEST=<local ip>,<dest ip>,<port>."""
+    from . import timecode
+    _, etc, _ = paths()
+    dest = os.environ.get("AVANTP_TC_DEST")
+    if dest:
+        ip, to, port = dest.split(",")
+        dest = (ip, to, int(port))
+    timecode.main(os.path.join(etc, "config.json"), timecode_status_path(), dest)
+
+
+def timecode_status_path():
+    d = os.environ.get("AVANTP_DIR")
+    return os.path.join(d, "run-timecode", "status.json") if d else "/run/avantp-timecode/status.json"
+
+
 def run_update_mode(args):
     """One-shot (started by avantp-update.path): handle update.request. With --fake --watch: development loop."""
     import time
@@ -78,7 +94,8 @@ def web(data_dir, host, port):
               file=sys.stderr)
         return 1
     _, etc, run = paths()
-    _, srv = webmod.serve(data_dir, host, port, cert if tls else None, key if tls else None, etc_dir=etc, run_dir=run)
+    _, srv = webmod.serve(data_dir, host, port, cert if tls else None, key if tls else None, etc_dir=etc, run_dir=run,
+                          tc_status=timecode_status_path())
     print("listening on %s:%d (%s)" % (host, port, "https" if tls else "HTTP, TESTING ONLY"))
     srv.serve_forever()
 
@@ -90,6 +107,8 @@ def main(argv):
         return web(paths()[0], argv[2], int(argv[3]))
     if len(argv) >= 2 and argv[1] == "apply":
         return run_apply(argv[2:])
+    if len(argv) == 2 and argv[1] == "timecode":
+        return run_timecode()
     if len(argv) >= 2 and argv[1] == "update-mode":
         return run_update_mode(argv[2:])
     if len(argv) != 4 or argv[1] != "render":
