@@ -12,14 +12,11 @@ SRC=$(cd "$(dirname "$0")/.." && pwd)
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq chrony nftables systemd-resolved python3 rfkill
-
-# the LAN side is chrony's server job only: stop the Debian default that lets chrony read DHCP-provided servers
-systemctl disable --now chrony.service >/dev/null 2>&1 || true   # started again by apply, with generated config
+apt-get install -y -qq chrony nftables systemd-resolved python3 rfkill openssl iproute2
 
 # code + example config
 mkdir -p /opt/avantp /etc/avantp
-cp -r "$SRC/avantp" /opt/avantp/
+cp -r "$SRC/avantp" "$SRC/ui" /opt/avantp/
 [ -f /etc/avantp/config.json ] || cp "$SRC/examples/config.json" /etc/avantp/config.json.example
 
 # WiFi would be a third path between the two sides: block it now and keep its driver from loading
