@@ -2,8 +2,10 @@
 import ipaddress
 import json
 import re
+import zoneinfo
 
 IFACE_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,14}$")
+TZ_RE = re.compile(r"^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+){0,2}$")
 NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 HOST_RE = re.compile(r"^(?=.{1,253}$)([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$")
 MAX_VLANS = 20
@@ -86,9 +88,13 @@ def validate(cfg):
                 _need(not ifc.network.overlaps(wan_net.network), f"vlan {vid} subnet overlaps WAN")
             nets.append((vid, ifc.network))
             v["_if"] = ifc
-        off = v.setdefault("utc_offset_min", 0)
-        _need(isinstance(off, int) and -720 <= off <= 840 and off % 15 == 0,
-              f"vlan {vid}: utc_offset_min must be a multiple of 15 in -720..840")
+        v.pop("utc_offset_min", None)  # replaced by a named time zone, which follows daylight saving
+        tz = v.setdefault("timezone", "UTC")
+        _need(isinstance(tz, str) and len(tz) <= 40 and TZ_RE.match(tz), f"vlan {vid}: invalid timezone {tz!r}")
+        try:
+            zoneinfo.ZoneInfo(tz)
+        except (zoneinfo.ZoneInfoNotFoundError, ValueError, OSError):
+            raise ConfigError(f"vlan {vid}: unknown timezone {tz!r}")
         v.setdefault("ntp", True)
         v.setdefault("mgmt", False)
         tc = v.setdefault("timecode", {})

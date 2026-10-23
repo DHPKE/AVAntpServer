@@ -64,6 +64,7 @@ await tab('VLANS'); await sleep(300)
 await ev(`[...document.querySelectorAll('.btn.ghost')].find(b=>b.textContent.includes('ADD VLAN')).click()`); await sleep(200)
 await ev(`[...document.querySelectorAll('.btn.ghost')].find(b=>b.textContent.includes('ADD VLAN')).click()`); await sleep(200)
 check('two VLAN rows', await ev(`document.querySelectorAll('tbody tr').length`) === 2)
+check('zone dropdown is grouped by region and labelled by city', await ev(`(()=>{const g=[...document.querySelectorAll('optgroup')].map(o=>o.label);return g.includes('Europe')&&g.includes('America')&&g.includes('Asia')&&[...document.querySelectorAll('option')].some(o=>/^Tokyo \\(UTC\\+09:00\\)$/.test(o.textContent))})()`))
 check('unsaved banner appears', (await text()).includes('Unsaved changes'))
 // row 1: mgmt static, +01:00 ; row 2 DHCP with Art-Net, -05:00
 await ev(`(()=>{const r=document.querySelectorAll('tbody tr');
@@ -72,8 +73,8 @@ await ev(`(()=>{const r=document.querySelectorAll('tbody tr');
 await sleep(200)
 await ev(`(()=>{const r=document.querySelectorAll('tbody tr');
  const set=(el,v)=>{el.value=v;el.dispatchEvent(new Event(el.tagName==='SELECT'?'change':'input'))};
- const i0=r[0].querySelectorAll('input,select'); set(i0[3],'10.10.10.2/24'); set(i0[4],60); if(!i0[6].checked) i0[6].click();
- const i1=r[1].querySelectorAll('input,select'); set(i1[0],20); set(i1[1],'show'); set(i1[4],-300); i1[7].click(); return 1})()`)
+ const i0=r[0].querySelectorAll('input,select'); set(i0[3],'10.10.10.2/24'); set(i0[4],'Europe/Berlin'); if(!i0[6].checked) i0[6].click();
+ const i1=r[1].querySelectorAll('input,select'); set(i1[0],20); set(i1[1],'show'); set(i1[4],'America/New_York'); i1[7].click(); return 1})()`)
 await sleep(300)
 await shot('4-vlans')
 await click('.actions .btn'); await sleep(900)
@@ -90,7 +91,7 @@ await tab('NTP'); await sleep(300)
 check('NTP defaults loaded', await ev(`document.querySelectorAll('textarea')[0].value`) === 'pool.ntp.org')
 await tab('MONITOR'); await sleep(2500)
 t = await text()
-check('VLAN clocks table shows both VLANs with offsets', t.includes('mgmt') && t.includes('show') && t.includes('+01:00') && t.includes('−05:00'), t.slice(300, 700))
+check('VLAN clocks table shows VLANs with city time zones and current offsets', t.includes('mgmt') && t.includes('show') && /Berlin \(UTC\+0[12]:00\)/.test(t) && /New York \(UTC−0[45]:00\)/.test(t), t.slice(300, 700))
 check('timecode column: Art-Net on show', t.includes('Art-Net @25'))
 await shot('5-monitor-vlans')
 

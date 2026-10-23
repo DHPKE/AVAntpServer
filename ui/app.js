@@ -9,8 +9,6 @@ createApp({setup() {
   const cfg = ref({active: null, pending: null})
   const draft = ref(null), up = reactive({default: '', backup: '', custom: ''}), baseline = ref('')
   const msg = ref(''), msgCls = ref('ok'), pw = reactive({old: '', new: ''})
-  const offsets = []
-  for (let m = -720; m <= 840; m += 15) offsets.push(m)
   let timers = []
 
   async function api(method, path, body) {
@@ -86,11 +84,33 @@ createApp({setup() {
   // ---- time helpers
   const utcMs = computed(() => now.value + skew.value)
   const utcNow = computed(() => new Date(utcMs.value).toISOString().slice(11, 19))
-  function fmtOff(m) {
-    const a = Math.abs(m)
-    return (m < 0 ? '−' : '+') + String(Math.floor(a / 60)).padStart(2, '0') + ':' + String(a % 60).padStart(2, '0')
+  // time zones are IANA names (Europe/Berlin), shown by city with the current UTC offset
+  function zoneOffset(tz, ms) {
+    try {
+      const p = new Intl.DateTimeFormat('en-US', {timeZone: tz, timeZoneName: 'longOffset'}).formatToParts(ms).find(x => x.type === 'timeZoneName')
+      const o = p.value.replace('GMT', '')
+      return 'UTC' + (o || '+00:00').replace('-', '−')
+    } catch (_) { return '' }
   }
-  function localTime(m) { return new Date(utcMs.value + (m || 0) * 60000).toISOString().slice(0, 19).replace('T', ' ') }
+  const cityOf = tz => tz === 'UTC' ? 'UTC' : tz.split('/').pop().replace(/_/g, ' ')
+  function tzLabel(tz) { return tz ? cityOf(tz) + ' (' + zoneOffset(tz, utcMs.value) + ')' : '—' }
+  const tzGroups = computed(() => {
+    let ids = []
+    try { ids = Intl.supportedValuesOf('timeZone') } catch (_) {}
+    if (!ids.includes('UTC')) ids = ['UTC', ...ids]
+    const g = {}
+    for (const id of ids) {
+      const region = id.includes('/') ? id.split('/')[0] : 'UTC'
+      if (region === 'Etc') continue
+      ;(g[region] = g[region] || []).push({id, label: cityOf(id) + ' (' + zoneOffset(id, Date.now()) + ')'})
+    }
+    for (const r in g) g[r].sort((a, b) => a.label.localeCompare(b.label))
+    return Object.keys(g).sort((a, b) => a === 'UTC' ? -1 : b === 'UTC' ? 1 : a.localeCompare(b)).map(region => ({region, zones: g[region]}))
+  })
+  function localTime(tz) {
+    try { return new Intl.DateTimeFormat('sv-SE', {timeZone: tz || 'UTC', dateStyle: 'short', timeStyle: 'medium'}).format(utcMs.value) }
+    catch (_) { return '—' }
+  }
   function tcText(v) {
     const t = v.timecode || {}, o = []
     if (t.artnet) o.push('Art-Net'); if (t.mtc_rtp) o.push('MTC-RTP')
@@ -112,7 +132,7 @@ createApp({setup() {
             upstream: {default: ['pool.ntp.org'], backup: ['time.cloudflare.com'], custom: [], local_fallback: false}, vlans: []}
   }
   function normVlan(v) {
-    v.mode = v.mode || 'dhcp'; v.utc_offset_min = v.utc_offset_min || 0
+    v.mode = v.mode || 'dhcp'; v.timezone = v.timezone || 'UTC'; delete v.utc_offset_min
     v.ntp = v.ntp !== false; v.mgmt = !!v.mgmt; v.address = v.address || ''
     v.timecode = Object.assign({artnet: false, mtc_rtp: false, fps: 25}, v.timecode || {})
     return v
@@ -167,5 +187,5 @@ createApp({setup() {
   onUnmounted(stop)
   return {tabs, tab, user, needsSetup, lu, lp, loginErr, busy, connected, doLogin, doLogout, draft, up, msg, msgCls, pw,
     tr, chronyRunning, sources, ifaces, ifaceNames, syncCls, syncTxt, syncIcon, syncName, fmtS, off, offCls, utcNow,
-    fmtOff, localTime, tcText, offsets, cfgVlans, hasPending, draftDirty, wanDns, addVlan, save, changePw}
+    tzLabel, tzGroups, localTime, tcText, cfgVlans, hasPending, draftDirty, wanDns, addVlan, save, changePw}
 }}).mount('#app')

@@ -8,8 +8,8 @@ BASE = {
     "lan": {"iface": "enp3s0"},
     "upstream": {"default": ["pool.ntp.org"], "backup": ["time.cloudflare.com"], "custom": []},
     "vlans": [
-        {"id": 10, "name": "mgmt", "mode": "static", "address": "10.10.10.2/24", "mgmt": True, "utc_offset_min": 60},
-        {"id": 20, "name": "show", "mode": "static", "address": "10.20.0.2/24", "utc_offset_min": -300,
+        {"id": 10, "name": "mgmt", "mode": "static", "address": "10.10.10.2/24", "mgmt": True, "timezone": "Europe/Berlin"},
+        {"id": 20, "name": "show", "mode": "static", "address": "10.20.0.2/24", "timezone": "America/New_York",
          "timecode": {"artnet": True}},
         {"id": 30, "name": "dhcp-site", "mode": "dhcp"},
     ],
@@ -44,12 +44,23 @@ class Validation(unittest.TestCase):
         c["vlans"][1]["address"] = "10.10.10.99/24"
         self.bad(c)
 
-    def test_offset_must_be_quarter_hours(self):
+    def test_timezone_by_city(self):
+        for ok in ("Europe/Berlin", "America/Argentina/Buenos_Aires", "UTC", "Asia/Kathmandu"):
+            c = copy.deepcopy(BASE)
+            c["vlans"][0]["timezone"] = ok
+            self.assertEqual(config.validate(c)["vlans"][0]["timezone"], ok)
+        for bad in ("Mars/Olympus", "../../etc/passwd", "Europe/Berlin\nx", "", 60, "A" * 50):
+            c = copy.deepcopy(BASE)
+            c["vlans"][0]["timezone"] = bad
+            self.bad(c)
+
+    def test_default_timezone_utc_and_old_offset_dropped(self):
         c = copy.deepcopy(BASE)
-        c["vlans"][0]["utc_offset_min"] = 61
-        self.bad(c)
-        c["vlans"][0]["utc_offset_min"] = 345  # +05:45 Nepal
-        config.validate(c)
+        del c["vlans"][0]["timezone"]
+        c["vlans"][0]["utc_offset_min"] = 60
+        v = config.validate(c)["vlans"][0]
+        self.assertEqual(v["timezone"], "UTC")
+        self.assertNotIn("utc_offset_min", v)
 
     def test_needs_mgmt_unless_commissioning(self):
         c = copy.deepcopy(BASE)
