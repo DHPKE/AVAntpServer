@@ -335,8 +335,27 @@ createApp({setup() {
     let id = 10; while (used.has(id)) id++
     draft.value.vlans.push(normVlan({id, name: 'vlan' + id, mode: 'dhcp', mgmt: draft.value.vlans.length === 0}))
   }
+  // IPv4 helpers for the one check the server cannot do for a DHCP WAN: is a unicast receiver on the WAN network?
+  const ip4 = a => { const p = String(a).trim().split('.'); return p.length === 4 && p.every(x => /^\d{1,3}$/.test(x) && +x < 256) ? p.reduce((n, x) => n * 256 + +x, 0) : null }
+  function inNet(ip, cidr) {
+    const [base, bits] = cidr.split('/'), a = ip4(ip), b = ip4(base), m = +bits === 0 ? 0 : (~0 << (32 - +bits)) >>> 0
+    return a !== null && b !== null && ((a & m) >>> 0) === ((b & m) >>> 0)
+  }
+  function wanConflict() {
+    const wan = ifaces.value.find(i => i.name === draft.value.wan.iface)
+    const nets = [...(wan ? wan.addrs : []), ...(draft.value.wan.mode === 'static' && draft.value.wan.address ? [draft.value.wan.address] : [])]
+    for (const v of draft.value.vlans) {
+      const t = v.timecode
+      if (!t.artnet || t.dest_mode !== 'unicast') continue
+      const hit = nets.find(n => inNet(t.dest_ip, n))
+      if (hit) return `VLAN ${v.id}: the Art-Net receiver ${t.dest_ip.trim()} is on the WAN network ${hit.replace(/\.\d+\//, '.0/')}: the VLANs never send to the WAN side. Choose a receiver on this VLAN.`
+    }
+    return ''
+  }
   async function save() {
     busy.value = true; msg.value = ''
+    const conflict = wanConflict()
+    if (conflict) { msg.value = conflict; msgCls.value = 'err'; busy.value = false; return }
     try {
       const d = await api('PUT', '/api/config', payload())
       cfg.value.pending = d.pending

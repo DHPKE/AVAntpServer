@@ -8,6 +8,7 @@ Status is written to a JSON file about once a second for the WebUI. The active c
 so an apply takes effect without restarting this service.
 """
 import datetime
+import errno
 import ipaddress
 import json
 import logging
@@ -79,12 +80,21 @@ def vlan_addresses():
     return out
 
 
+def route_dev(dest, src):
+    """The interface the kernel would send a packet from `src` to `dest` through (None when it cannot tell)."""
+    try:
+        out = subprocess.run(["ip", "-j", "route", "get", dest, "from", src], capture_output=True, text=True, timeout=3).stdout
+        return json.loads(out)[0].get("dev")
+    except (OSError, ValueError, IndexError, KeyError, subprocess.TimeoutExpired):
+        return None
+
+
 class Sender:
     """One Art-Net output per VLAN that has it enabled."""
 
-    def __init__(self, cfg_path, status_path, dest_override=None, now=time.time, addresses=vlan_addresses):
+    def __init__(self, cfg_path, status_path, dest_override=None, now=time.time, addresses=vlan_addresses, route=route_dev):
         self.cfg_path, self.status_path, self.dest_override = cfg_path, status_path, dest_override
-        self.now, self.addresses = now, addresses
+        self.now, self.addresses, self.route = now, addresses, route
         self.outputs = {}                  # vlan id -> dict(state, fps, tz, name, iface, next, sent, last, dest, sock)
         self.cfg_mtime = None
         self.addr_at = 0
@@ -126,6 +136,24 @@ class Sender:
             o["logged"] = (state, detail)
             msg = f"VLAN {vid} {o['name']}: Art-Net {state}{' ' + detail if detail else ''}"
             (log.warning if state in ("error", "no-address") else log.info)(msg)
+
+    def _route_ok(self, vid, o, target, local_ip, net, t):
+        """A unicast address inside this VLAN's network can still be reached through another interface when that other
+        interface has a more specific route (e.g. the WAN's /24 inside a big VLAN /19). The VLANs must never send to the
+        WAN side, so ask the kernel where the packet would go (re-checked every 5 s) and refuse if it is not this VLAN."""
+        key = (target, local_ip)
+        if o.get("route_key") != key or t - o.get("route_at", 0) > 5:
+            o["route_key"], o["route_at"], o["route_via"] = key, t, self.route(target, local_ip)
+        via = o["route_via"]
+        if via is None or via == o["iface"]:
+            return True
+        wan = (getattr(self, "cfg", None) or {}).get("wan", {}).get("iface")
+        why = (f"{target} is on the WAN side ({via}): the VLANs never send to the WAN. Choose a receiver on this VLAN"
+               f"{' (' + net + ')' if net else ''}" if via == wan else
+               f"the kernel would send to {target} through {via}, not through this VLAN ({o['iface']}); nothing is sent")
+        o["error"], o["state"], o["dest"] = why, "error", None
+        self._state(vid, o, "error", f"({why})")
+        return False
 
     def refresh_addresses(self):
         if self.now() - self.addr_at >= 2:
@@ -177,6 +205,8 @@ class Sender:
                 o["error"], o["state"], o["dest"] = f"{target} is not on this VLAN's network {net}", "error", None
                 self._state(vid, o, "error", f"(destination {target} is not on this VLAN's network {net}; nothing is sent)")
                 continue
+            if unicast and not self._route_ok(vid, o, target, local_ip, net, t):
+                continue
             o["dest"] = (f"{target}:{ARTNET_PORT} (unicast)" if unicast else
                          f"{target}:{ARTNET_PORT} (broadcast)" if not self.dest_override else f"{bcast}:{self.dest_override[2]}")
             if o["next"] == 0 or t - o["next"] > 1.0:          # first frame, or we fell behind: realign
@@ -192,8 +222,10 @@ class Sender:
                     o["last"], o["error"], o["state"] = fmt(tc), None, "sending"
                     self._state(vid, o, "sending", f"{o['fps']} fps, zone {o['tz']}, to {o['dest']}")
                 except OSError as e:
-                    o["error"], o["state"] = str(e), "error"
-                    self._state(vid, o, "error", f"(send to {o['dest']} failed: {e})")
+                    why = ("the firewall blocked the packet: that destination is not allowed on this VLAN" if e.errno == errno.EPERM
+                           else str(e))
+                    o["error"], o["state"] = f"send to {o['dest']} failed: {why}", "error"
+                    self._state(vid, o, "error", f"(send to {o['dest']} failed: {why})")
                 o["next"] += 1 / rate
             nxt = o["next"] if nxt is None else min(nxt, o["next"])
         self.write_status()

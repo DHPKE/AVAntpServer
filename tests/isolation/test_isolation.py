@@ -321,6 +321,43 @@ def unicast_tests(check, d_cfg):
     check("unicast: ... and so are stray broadcasts now that the broadcast allowance is gone", out["dst"]["lan0.20"].get("10.20.0.255"), None)
     check("unicast: a packet aimed at the WAN side (10.99.0.1:6454) never arrives there", wan_n, 0)
     check("unicast: nothing goes to VLAN 10 at all", len(out["lan0.10"]), 0)
+    wan_overlap_test(check, d_cfg)
+
+
+def wan_overlap_test(check, d_cfg):
+    print("--- Art-Net unicast: an address the kernel would route to the WAN is refused (VLAN network overlaps the WAN)")
+    d = tempfile.mkdtemp()
+    ov = copy.deepcopy(CFG)
+    ov["vlans"][1]["timecode"] = {"artnet": True, "fps": 25, "artnet_dest": "10.20.0.130"}   # inside VLAN 20's /24 ...
+    load(ov, d)
+    json.dump(config.dump(config.validate(ov)), open(f"{d_cfg}/config.json", "w"))
+    run("ip route add 10.20.0.128/25 dev enp4s0", "box")                                      # ... but the WAN has a more specific route
+    wan_code = ("import socket, time\n"
+                "s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.bind(('', 6454)); s.settimeout(0.05); n = 0; e = time.time() + 3.0\n"
+                "while time.time() < e:\n    try:\n        s.recv(100); n += 1\n    except socket.timeout:\n        pass\nprint(n)\n")
+    wan = subprocess.Popen(["ip", "netns", "exec", "wanpeer", "python3", "-c", wan_code], stdout=subprocess.PIPE, text=True)
+    run("ip addr add 10.20.0.130/32 dev wan0", "wanpeer")                                    # a host that really lives on the WAN side
+    time.sleep(0.4)
+    code = ("import sys, time, errno, socket\n"
+            "sys.path.insert(0, '/work')\n"
+            "from avantp import timecode as t\n"
+            f"s = t.Sender('{d_cfg}/config.json', '{d_cfg}/status.json'); end = time.time() + 1.5\n"
+            "while time.time() < end:\n    s.tick(); time.sleep(0.004)\n"
+            "s.write_status(force=True)\n"
+            "x = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); x.bind(('10.20.0.2', 0))\n"
+            "blocked = 0\n"
+            "for _ in range(5):\n"
+            "    try:\n        x.sendto(b'forced', ('10.20.0.130', 6454))\n"
+            "    except OSError as e:\n        blocked += e.errno == errno.EPERM\n"
+            "print('forced sends blocked by the firewall:', blocked)\n")
+    r = subprocess.run(["ip", "netns", "exec", "box", "python3", "-c", code], capture_output=True, text=True)
+    wan_n = int(wan.communicate(timeout=10)[0])
+    a = {v["id"]: v["artnet"] for v in json.load(open(f"{d_cfg}/status.json"))["vlans"]}[20]
+    run("ip route del 10.20.0.128/25 dev enp4s0", "box")
+    check("overlap: the sender refuses and says the address is on the WAN side", a["state"] == "error" and "on the WAN side (enp4s0)" in a["error"], True)
+    check("overlap: ... without sending a single packet itself", a.get("sent", 0), 0)
+    check("overlap: ... a deliberately forced packet is stopped by the firewall (EPERM, the error you saw)", "forced sends blocked by the firewall: 5" in r.stdout, True)
+    check("overlap: ... and nothing at all reaches the WAN side", wan_n, 0)
 
 
 def helper_tests(check, listener_ok):

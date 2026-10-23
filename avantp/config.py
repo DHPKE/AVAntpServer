@@ -127,6 +127,9 @@ def validate(cfg):
                 raise ConfigError(f"vlan {vid}: Art-Net destination {dest!r} is not an IPv4 address (or 'broadcast')")
             _need(ip.version == 4 and not (ip.is_multicast or ip.is_loopback or ip.is_unspecified or ip.is_link_local
                                            or ip.is_reserved), f"vlan {vid}: Art-Net destination {dest} must be a normal unicast IPv4 address")
+            if wan_net and ip in wan_net.network:
+                raise ConfigError(f"vlan {vid}: Art-Net destination {dest} is on the WAN network {wan_net.network}: the VLANs "
+                                  f"never send to the WAN side. Choose a receiver on this VLAN.")
             if v["mode"] == "static":              # the LAN side has no gateway: the receiver has to be on this VLAN
                 net = v["_if"].network
                 _need(ip in net, f"vlan {vid}: Art-Net destination {dest} is not on this VLAN's network {net}")

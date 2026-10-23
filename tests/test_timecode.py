@@ -216,6 +216,71 @@ class UnicastTest(unittest.TestCase):
         self.assertEqual({addr for addr, _ in self.sent}, {("10.3.5.5", 6454)})
 
 
+class RouteCheckTest(UnicastTest):
+    """The kernel decides the interface: an address inside the VLAN's /19 may still be routed to the WAN's /24."""
+
+    def sender2(self, addresses, route, now=time.time):
+        s = self.sender(addresses)
+        s.route, s.now = route, now
+        return s
+
+    def test_an_address_the_kernel_routes_to_the_wan_is_refused_with_a_clear_reason(self):
+        c = copy.deepcopy(BASE)
+        c["wan"] = {"iface": "enp4s0", "mode": "dhcp"}
+        c["vlans"][2]["timecode"] = {"artnet": True, "mtc_rtp": False, "fps": 25, "artnet_dest": "10.3.1.50"}   # VLAN 30, DHCP
+        json.dump(config.dump(config.validate(c)), open(self.cfg, "w"))
+        s = self.sender2({"enp3s0.30": ("10.3.10.1", "10.3.31.255", "10.3.0.0/19")}, lambda dest, src: "enp4s0")
+        end = time.time() + 0.3
+        while time.time() < end:
+            s.tick()
+            time.sleep(0.004)
+        s.write_status(force=True)
+        a = [x for x in json.load(open(os.path.join(self.dir, "s.json")))["vlans"] if x["id"] == 30][0]["artnet"]
+        self.assertEqual(self.sent, [])                                                 # nothing left the sender
+        self.assertEqual(a["state"], "error")
+        self.assertIn("on the WAN side (enp4s0)", a["error"])
+        self.assertIn("Choose a receiver on this VLAN (10.3.0.0/19)", a["error"])
+
+    def test_routing_through_the_vlan_is_fine_and_an_unknown_route_does_not_block(self):
+        self.write("10.20.0.50")
+        self.run_for(self.sender2({"enp3s0.20": ("10.20.0.2", "10.20.0.255", "10.20.0.0/24")}, lambda d, s: "enp3s0.20"))
+        self.assertGreater(len(self.sent), 3)
+        self.sent.clear()
+        self.run_for(self.sender2({"enp3s0.20": ("10.20.0.2", "10.20.0.255", "10.20.0.0/24")}, lambda d, s: None))   # `ip` failed
+        self.assertGreater(len(self.sent), 3)                                           # the firewall remains the backstop
+
+    def test_a_route_that_changes_later_is_noticed(self):
+        self.write("10.20.0.50")
+        clock = [time.time()]
+        via = ["enp3s0.20"]
+        s = self.sender2({"enp3s0.20": ("10.20.0.2", "10.20.0.255", "10.20.0.0/24")}, lambda d, src: via[0], now=lambda: clock[0])
+        for _ in range(3):
+            clock[0] += 0.05
+            s.tick()
+        self.assertGreater(len(self.sent), 0)
+        self.sent.clear()
+        via[0] = "enp4s0"                                                               # a more specific route appears
+        clock[0] += 6                                                                   # the check repeats every 5 s
+        s.tick()
+        clock[0] += 0.2
+        s.tick()
+        self.assertEqual(self.sent, [])
+
+    def test_a_blocked_send_is_explained_not_just_errno_1(self):
+        self.write("10.20.0.50")
+        s = self.sender2({"enp3s0.20": ("10.20.0.2", "10.20.0.255", "10.20.0.0/24")}, lambda d, src: None)
+
+        class Blocked:
+            def sendto(inner, data, addr):
+                raise PermissionError(1, "Operation not permitted")
+            def close(inner): pass
+        s._socket = lambda ip: Blocked()
+        a = self.run_for(s, 0.2)
+        self.assertEqual(a["state"], "error")
+        self.assertIn("the firewall blocked the packet", a["error"])
+        self.assertNotIn("Operation not permitted", a["error"])
+
+
 class SenderTest(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp()

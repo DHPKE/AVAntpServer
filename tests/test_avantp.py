@@ -204,6 +204,17 @@ class Render(unittest.TestCase):
         with self.assertRaises(config.ConfigError):
             config.validate(with_dest("239.1.1.1", vlan=2))
 
+    def test_unicast_receiver_on_a_static_wan_network_is_refused(self):
+        c = copy.deepcopy(BASE)
+        c["wan"] = {"iface": "enp4s0", "mode": "static", "address": "10.77.0.24/24", "gateway": "10.77.0.254"}
+        c["vlans"][2]["timecode"] = {"artnet": True, "mtc_rtp": False, "fps": 25, "artnet_dest": "10.77.0.50"}   # VLAN 30, DHCP
+        with self.assertRaises(config.ConfigError) as cm:
+            config.validate(c)
+        self.assertIn("on the WAN network 10.77.0.0/24", str(cm.exception))
+        self.assertIn("never send to the WAN", str(cm.exception))
+        c["vlans"][2]["timecode"]["artnet_dest"] = "10.3.5.5"
+        config.validate(c)
+
     def test_unicast_destination_is_pinned_in_the_firewall(self):
         c = copy.deepcopy(BASE)
         c["vlans"][1]["timecode"] = {"artnet": True, "mtc_rtp": False, "fps": 25, "artnet_dest": "10.20.0.50"}

@@ -101,6 +101,11 @@ check('... choosing unicast shows the receiver address field', d9.ip === true, J
 const setIp = v => ev(`(() => { const i = document.querySelectorAll('tbody tr')[1].querySelector('td:nth-child(9) input'); i.value = ${JSON.stringify(v)}; i.dispatchEvent(new Event('input')) })()`)
 await setIp('not-an-ip'); await click('.actions .btn'); await sleep(800)
 check('... a wrong address is refused with a clear message', (await text()).includes('not an IPv4 address'), (await text()).slice(-200))
+// the receiver is on the WAN network (the fake box has WAN 10.1.1.24/24): refused in the page, before anything is saved
+await setIp('10.1.1.50'); await click('.actions .btn'); await sleep(500)
+t = await text()
+check('unicast to an address on the WAN network is refused, with the reason', t.includes('on the WAN network 10.1.1.0/24') && t.includes('never send to the WAN'), t.slice(-260))
+check('... and it was not saved', (await ev(`fetch('/api/config').then(r => r.json()).then(d => JSON.stringify(d.pending))`)).includes('10.1.1.50') === false)
 await setIp('10.20.0.50')
 const fit = await ev(`(() => { const r = document.querySelectorAll('tbody tr')[1]; const box = e => e.getBoundingClientRect();
   const cell = box(r.querySelector('td:nth-child(9)')), sel = box(r.querySelector('td:nth-child(9) select')), inp = box(r.querySelector('td:nth-child(9) input'));
