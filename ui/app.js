@@ -303,7 +303,7 @@ createApp({setup() {
     if (s.state === 'done') return 'Updated from ' + (s.from_version || '?') + ' to ' + (s.installed || '?') + '. The page reloads in a moment; log in again.'
     if (s.state === 'error') return s.error || 'Something went wrong.'
     if (s.state === 'uptodate' || c.state === 'uptodate') return 'You are up to date.'
-    if (c.state === 'newer') return c.ahead_by + ' newer commit' + (c.ahead_by === 1 ? '' : 's') + ' on GitHub: "' + c.message + '"'
+    if (c.state === 'newer') return (c.ahead_by > 1 ? c.ahead_by + ' newer commits' : 'A newer version') + ' on GitHub: "' + c.message + '"'
     if (c.state === 'local-newer') return 'This box runs a version that is newer than GitHub (a local build).'
     if (c.state) return 'The installed version is not on GitHub (a local build). UPDATE NOW replaces it with the latest: "' + c.message + '"'
     return 'Not checked yet. UPDATE NOW checks first and installs only when there is something newer.'

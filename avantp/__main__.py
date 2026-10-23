@@ -79,7 +79,7 @@ def run_software(args):
             open(v, "w").write(new)
             lines.append("installed version " + new)
             return 0, lines
-        kw = {"fetch": fake_github, "runner": fake_run}
+        kw = {"fetch": fake_github, "runner": fake_run, "fresh": lambda: None}
     else:
         p = apply.Paths()
         ex = apply.SystemExecutor(p)

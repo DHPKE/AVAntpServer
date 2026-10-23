@@ -37,6 +37,17 @@ def github(path, timeout=10):
         return json.loads(r.read().decode("utf-8"))
 
 
+def fresh_head(timeout=15):
+    """The newest commit of main straight from git (`git ls-remote`). GitHub's API may lag a minute behind a push, git does
+    not. None when git is not installed or GitHub cannot be reached."""
+    try:
+        out = subprocess.run(["git", "ls-remote", f"https://github.com/{REPO}.git", "refs/heads/main"],
+                             capture_output=True, text=True, timeout=timeout).stdout.split()
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return out[0] if out and re.fullmatch(r"[0-9a-f]{40}", out[0]) else None
+
+
 def installed(paths):
     try:
         with open(paths.under("opt/avantp/VERSION")) as f:
@@ -45,10 +56,17 @@ def installed(paths):
         return "unknown"
 
 
-def compare(inst, fetch=github):
+def compare(inst, fetch=github, fresh=fresh_head):
     """What GitHub's main looks like compared with the installed version `inst` (e.g. 'b47ea20' or '0021bf5-dirty')."""
     head = fetch("/commits/main")
     sha = head["sha"]
+    newest = fresh()
+    if newest and newest != sha:                           # the API has not caught up with a push yet: git is right
+        head = {"sha": newest, "commit": {"message": "(just published: GitHub's API does not list it yet)", "committer": {}}}
+        stale = True
+        sha = newest
+    else:
+        stale = False
     msg = (head.get("commit", {}).get("message") or "").splitlines()[0][:140] if head.get("commit") else ""
     out = {"latest": sha[:7], "latest_full": sha, "message": msg, "date": (head.get("commit", {}).get("committer") or {}).get("date", ""),
            "installed": inst, "state": "unknown", "ahead_by": 0}
@@ -59,6 +77,9 @@ def compare(inst, fetch=github):
     base = base.group(0)
     if sha.startswith(base):
         out["state"] = "uptodate"
+        return out
+    if stale:                                              # compare-by-API would 404 for a commit it has not indexed yet
+        out["state"], out["ahead_by"] = "newer", 1
         return out
     try:
         cmp = fetch(f"/compare/{base}...{sha}")
@@ -119,7 +140,7 @@ def step_of(lines):
     return "Working"
 
 
-def handle(paths, ex, fetch=github, runner=run_update_script, now=time.time):
+def handle(paths, ex, fetch=github, runner=run_update_script, now=time.time, fresh=fresh_head):
     """Process paths.data/software.request. Returns the resulting state."""
     req = os.path.join(paths.data, "software.request")
     try:
@@ -146,7 +167,7 @@ def handle(paths, ex, fetch=github, runner=run_update_script, now=time.time):
         opened = _window(paths, ex, True, CHECK_WINDOW if word == "check" else UPDATE_WINDOW)
         _status(paths, state="checking" if word == "check" else "updating", step="Asking GitHub for the latest version")
         try:
-            result = compare(inst, fetch)
+            result = compare(inst, fetch, fresh)
         except urllib.error.HTTPError as e:                  # GitHub answered, so the connection works: say what it said
             log.error("GitHub answered %s", e.code)
             msg = PRIVATE_HINT % (e.code, REPO) if e.code in (401, 403, 404) else f"GitHub answered HTTP {e.code}; try again later."
