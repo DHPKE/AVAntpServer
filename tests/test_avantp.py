@@ -112,7 +112,7 @@ class Render(unittest.TestCase):
         files = render.networkd(cfg())
         for name in ("30-avantp-enp3s0.10.network", "30-avantp-enp3s0.20.network", "30-avantp-enp3s0.30.network"):
             self.assertNotIn("\nGateway=", files[name])
-            self.assertNotIn("DNS=", files[name])
+            self.assertNotIn("\nDNS=", files[name])
         d = files["30-avantp-enp3s0.30.network"]
         for key in ("UseRoutes=no", "UseGateway=no", "UseDNS=no", "UseNTP=no"):
             self.assertIn(key, d)
