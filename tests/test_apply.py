@@ -136,6 +136,58 @@ class ApplyTest(unittest.TestCase):
         self.assertEqual(os.readlink(self.f("etc/resolv.conf")), "../run/systemd/resolve/stub-resolv.conf")
 
 
+class RecoveryTest(unittest.TestCase):
+    """An apply that is cut short (power loss, reset, crash) must not stay half applied."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.p = apply.Paths(self.root)
+        os.makedirs(self.p.data)
+        os.makedirs(self.p.run)
+
+    def f(self, rel):
+        return os.path.join(self.root, rel)
+
+    def crash_during_activation(self):
+        class Crash(apply.FakeExecutor):
+            def activate(self, *a, **k):
+                raise KeyboardInterrupt("the box lost power here")        # not caught by the helper, like a real crash
+        json.dump(BASE, open(os.path.join(self.p.data, "pending.json"), "w"))
+        with self.assertRaises(KeyboardInterrupt):
+            apply.apply_once(self.p, Crash(), confirm_seconds=1, poll=0.02)
+
+    def test_nothing_to_do_after_a_normal_run(self):
+        self.assertEqual(apply.recover(self.p), "nothing")
+        json.dump(BASE, open(os.path.join(self.p.data, "pending.json"), "w"))
+        threading.Thread(target=lambda: (time.sleep(0.3), open(os.path.join(self.p.data, "confirm"), "w").close()), daemon=True).start()
+        self.assertEqual(apply.apply_once(self.p, apply.FakeExecutor(), confirm_seconds=3, poll=0.02), "applied")
+        self.assertFalse(os.path.exists(self.f("etc/avantp/" + apply.INPROGRESS)))                    # marker gone
+        self.assertEqual(apply.recover(self.p), "nothing")
+
+    def test_interrupted_apply_is_undone_at_the_next_boot(self):
+        os.makedirs(self.f("etc/chrony"))
+        open(self.f("etc/chrony/chrony.conf"), "w").write("ORIGINAL\n")
+        self.crash_during_activation()
+        self.assertTrue(os.path.exists(self.f("etc/avantp/" + apply.INPROGRESS)))                      # the crash left it behind
+        self.assertIn("table inet avantp", open(self.f("etc/avantp/nftables.nft")).read())             # half applied
+        self.assertNotEqual(open(self.f("etc/chrony/chrony.conf")).read(), "ORIGINAL\n")
+        self.assertEqual(apply.recover(self.p), "recovered")                                           # "the next boot"
+        self.assertEqual(open(self.f("etc/chrony/chrony.conf")).read(), "ORIGINAL\n")
+        self.assertFalse(os.path.exists(self.f("etc/avantp/nftables.nft")))                            # did not exist before
+        self.assertFalse(os.path.exists(self.f("etc/avantp/" + apply.INPROGRESS)))
+        st = json.load(open(os.path.join(self.p.run, "status.json")))
+        self.assertEqual(st["state"], "rolled-back")
+        self.assertIn("interrupted", st["reason"])
+        self.assertEqual(apply.recover(self.p), "nothing")                                             # and only once
+
+    def test_a_missing_snapshot_is_reported_not_guessed(self):
+        os.makedirs(self.f("etc/avantp"))
+        open(self.f("etc/avantp/" + apply.INPROGRESS), "w").write("{}")
+        self.assertEqual(apply.recover(self.p), "error")
+        self.assertFalse(os.path.exists(self.f("etc/avantp/" + apply.INPROGRESS)))                     # no endless retry loop
+        self.assertEqual(json.load(open(os.path.join(self.p.run, "status.json")))["state"], "error")
+
+
 class ChangedOnlyTest(unittest.TestCase):
     """A reconfigure drops a link's DHCP lease and may give the box a different address: only touch what changed."""
 

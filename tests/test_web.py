@@ -143,6 +143,29 @@ class WebTest(unittest.TestCase):
         for f in ("pending.json", "config.json", "apply.request"):
             os.unlink(os.path.join(self.dir, f))
 
+    def test_logs_api(self):
+        _, ck, csrf = self.login()
+        self.assertEqual(self.req("GET", "/api/logs")[0], 401)
+        self.assertEqual(self.req("GET", "/api/boots")[0], 401)
+        from unittest import mock
+        with mock.patch("avantp.web.logs.tail", return_value={"lines": ["x"], "error": None}) as m:
+            st, d, _ = self.req("GET", "/api/logs?source=timecode&level=warning&lines=50&boot=-1", cookie=ck)
+        self.assertEqual((st, d["lines"]), (200, ["x"]))
+        m.assert_called_once_with("timecode", "warning", "50", "-1")
+        with mock.patch("avantp.web.logs.tail", side_effect=ValueError("bad")):
+            self.assertEqual(self.req("GET", "/api/logs?source=--vacuum-size=1", cookie=ck)[0], 400)
+        with mock.patch("avantp.web.logs.boots", return_value={"boots": [], "error": None}):
+            self.assertEqual(self.req("GET", "/api/boots", cookie=ck)[1], {"boots": [], "error": None})
+
+    def test_a_bug_in_one_request_gives_a_500_not_a_dead_connection(self):
+        _, ck, csrf = self.login()
+        from unittest import mock
+        with mock.patch.object(web.App, "update_status", side_effect=RuntimeError("boom")):
+            st, d, _ = self.req("GET", "/api/update-mode", cookie=ck)
+        self.assertEqual(st, 500)
+        self.assertIn("Log tab", d["error"])
+        self.assertEqual(self.req("GET", "/api/update-mode", cookie=ck)[0], 200)             # the service carries on
+
     def test_timecode_status_endpoint(self):
         _, ck, csrf = self.login()
         self.assertEqual(self.req("GET", "/api/timecode")[0], 401)

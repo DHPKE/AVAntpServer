@@ -1,7 +1,7 @@
-const {createApp, ref, reactive, computed, watch, onMounted, onUnmounted} = Vue
+const {createApp, ref, reactive, computed, watch, onMounted, onUnmounted, nextTick} = Vue
 
 createApp({setup() {
-  const tabs = ['monitor', 'network', 'vlans', 'ntp', 'system']
+  const tabs = ['monitor', 'network', 'vlans', 'ntp', 'log', 'system']
   const tab = ref('monitor')
   const user = ref(null), csrf = ref(''), needsSetup = ref(false), version = ref('')
   const lu = ref(''), lp = ref(''), loginErr = ref(''), busy = ref(false)
@@ -33,7 +33,51 @@ createApp({setup() {
     timers = [setInterval(poll, 2000), setInterval(() => now.value = Date.now(), 1000)]
     if (tab.value === 'monitor') startLive()
     startBeat()
+    loadBoots()
   }
+  // ---- log window
+  const logSel = reactive({source: 'all', level: 'all', boot: 0, lines: 200, auto: true})
+  const logLines = ref([]), logErr = ref(''), logLoaded = ref(false), logbox = ref(null)
+  const boots = ref([]), bootsErr = ref(''), dismissed = ref('')
+  try { dismissed.value = localStorage.getItem('avantp-restart-dismissed') || '' } catch (_) {}
+  let logTimer = null
+  const dt = t => t ? new Date(t * 1000).toISOString().replace('T', ' ').slice(0, 19) + ' UTC' : ''
+  function logCls(l) {
+    if (/traceback|exception|error|fail|panic|segfault|oom|crit|killed|unhandled/i.test(l) && !/error: 0|no error/i.test(l)) return 'bad'
+    if (/warn|degraded|timed out|link is down|downgraded|denied|rolling back|not confirmed/i.test(l)) return 'warn'
+    return ''
+  }
+  async function loadLog() {
+    try {
+      const q = new URLSearchParams({source: logSel.source, level: logSel.level, boot: logSel.boot, lines: logSel.lines})
+      const d = await api('GET', '/api/logs?' + q)
+      const box = logbox.value
+      const atEnd = !box || box.scrollHeight - box.scrollTop - box.clientHeight < 40
+      logLines.value = d.lines; logErr.value = d.error || ''; logLoaded.value = true
+      if (atEnd) nextTick(() => { if (logbox.value) logbox.value.scrollTop = logbox.value.scrollHeight })
+    } catch (e) { logErr.value = e.message }
+  }
+  async function loadBoots() {
+    try { const d = await api('GET', '/api/boots'); boots.value = d.boots; bootsErr.value = d.error || '' } catch (e) { bootsErr.value = e.message }
+  }
+  async function copyLog() {
+    try { await navigator.clipboard.writeText(logLines.value.join('\n')); msg.value = 'Log copied to the clipboard.'; msgCls.value = 'ok' }
+    catch (_) { msg.value = 'Copy is not allowed in this browser: select the text and copy it by hand.'; msgCls.value = 'err' }
+  }
+  const restartNotice = computed(() => {
+    const prev = boots.value.filter(b => b.ended !== 'running').slice(-1)[0]
+    if (!prev || prev.ended !== 'abrupt' || String(prev.last) === dismissed.value) return null
+    return {at: dt(prev.last), key: String(prev.last)}
+  })
+  function dismissRestart() {
+    dismissed.value = restartNotice.value.key
+    try { localStorage.setItem('avantp-restart-dismissed', dismissed.value) } catch (_) {}
+  }
+  function startLog() {
+    stopLog(); loadLog(); loadBoots()
+    logTimer = setInterval(() => { if (logSel.auto && !document.hidden) loadLog() }, 3000)
+  }
+  function stopLog() { clearInterval(logTimer); logTimer = null }
   // ---- the SYNCED icon flashes once per second, started on the full second of the (server-corrected) clock
   let beatTimer = null
   const reduceMotion = () => { try { return matchMedia('(prefers-reduced-motion: reduce)').matches } catch (_) { return false } }
@@ -44,7 +88,7 @@ createApp({setup() {
   }
   function startBeat() { if (!beatTimer) beat() }
   function stopBeat() { clearTimeout(beatTimer); beatTimer = null }
-  function stop() { timers.forEach(clearInterval); timers = []; stopLive(); stopBeat() }
+  function stop() { timers.forEach(clearInterval); timers = []; stopLive(); stopBeat(); stopLog() }
   async function doLogin() {
     busy.value = true; loginErr.value = ''
     try {
@@ -290,12 +334,12 @@ createApp({setup() {
       pw.old = pw.new = ''; msg.value = 'Password changed. Other sessions were logged out.'; msgCls.value = 'ok'
     } catch (e) { msg.value = e.message; msgCls.value = 'err' } finally { busy.value = false }
   }
-  watch(tab, t => { msg.value = ''; t === 'monitor' ? startLive() : stopLive() })
+  watch(tab, t => { msg.value = ''; t === 'monitor' ? startLive() : stopLive(); t === 'log' ? startLog() : stopLog() })
   watch(() => ap.value.state, (n, o) => { if (o && n !== o && ['applied', 'rolled-back', 'error'].includes(n)) loadConfig().catch(() => {}) })
 
   onMounted(start)
   onUnmounted(stop)
-  return {lastUpdate, dhcpState, collapsed, toggleCard, liveTc, synced, um, umLeftText, setUpdateMode, version, tabs, tab, user, needsSetup, lu, lp, loginErr, busy, connected, doLogin, doLogout, draft, up, msg, msgCls, pw,
+  return {logSel, logLines, logErr, logLoaded, logbox, boots, bootsErr, dt, logCls, loadLog, loadBoots, copyLog, restartNotice, dismissRestart, lastUpdate, dhcpState, collapsed, toggleCard, liveTc, synced, um, umLeftText, setUpdateMode, version, tabs, tab, user, needsSetup, lu, lp, loginErr, busy, connected, doLogin, doLogout, draft, up, msg, msgCls, pw,
     ap, left, recent, applyNow, confirm, cfg, shown, tr, chronyRunning, sources, ifaces, ifaceNames, syncCls, syncTxt, syncIcon, syncName, fmtS, off, offCls, utcNow,
     tzLabel, tzGroups, localTime, tcText, tcCls, tcStat, tc, utcDate, vlanAddr, cfgVlans, hasPending, draftDirty, wanDns, addVlan, save, changePw}
 }}).mount('#app')

@@ -7,6 +7,7 @@ re-validates pending.json itself, so everything it writes comes from the validat
 A change that cuts the user off (wrong VLAN, wrong address) therefore undoes itself.
 """
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -18,6 +19,8 @@ from . import config, render
 
 CONFIRM_SECONDS = int(os.environ.get("AVANTP_CONFIRM_SECONDS", 90))   # the env override exists for tests
 MAX_JSON = 256 * 1024
+log = logging.getLogger("apply")
+INPROGRESS = "apply.inprogress"       # in paths.etc: present while an apply is running; left behind by a crash or reset
 
 
 class Paths:
@@ -97,6 +100,34 @@ def restore(paths, snapdir, meta):
             os.symlink(m["target"], p)
 
 
+def _clear_marker(paths):
+    try:
+        os.unlink(os.path.join(paths.etc, INPROGRESS))
+    except FileNotFoundError:
+        pass
+
+
+def recover(paths):
+    """At boot: an apply that was cut short (power loss, reset, crash) was never confirmed, so it must not stay half
+    applied. Restore the snapshot taken before it started. Runs before the firewall and network services start, so
+    they come up with the old, known-good files. Returns 'recovered', 'nothing' or 'error'."""
+    marker = os.path.join(paths.etc, INPROGRESS)
+    if not os.path.lexists(marker):
+        return "nothing"
+    snapdir = os.path.join(paths.etc, "rollback")
+    meta = _json_or(os.path.join(snapdir, "meta.json"), None)
+    if not meta:
+        log.error("an apply was interrupted but there is no snapshot to restore: %s is left as it is", paths.etc)
+        _clear_marker(paths)
+        set_status(paths, state="error", error="an apply was interrupted by a restart and no snapshot was found")
+        return "error"
+    restore(paths, snapdir, meta)
+    _clear_marker(paths)
+    log.warning("an apply was interrupted by a restart or crash: the previous setup was restored (%d files)", len(meta))
+    set_status(paths, state="rolled-back", reason="the apply was interrupted by a restart or crash, so the previous setup was restored")
+    return "recovered"
+
+
 def updatemode_reset(paths):
     from . import updatemode
     updatemode.close_after_apply(paths)
@@ -118,10 +149,12 @@ def apply_once(paths, ex, confirm_seconds=CONFIRM_SECONDS, poll=0.5, now=time.ti
         cfg = config.validate(_read_json_nofollow(os.path.join(paths.data, "pending.json")))
         files = render.render_all(cfg)
     except (OSError, ValueError, KeyError, TypeError, AttributeError, config.ConfigError) as e:
+        log.error("pending config rejected: %s", e)
         set_status(paths, state="error", error=f"pending config rejected: {e}")
         return "error"
     ok, why = ex.preflight(files)
     if not ok:
+        log.error("pre-flight check failed, nothing changed: %s", why)
         set_status(paths, state="error", error=f"pre-flight check failed, nothing changed: {why}")
         return "error"
 
@@ -136,6 +169,7 @@ def apply_once(paths, ex, confirm_seconds=CONFIRM_SECONDS, poll=0.5, now=time.ti
     takeover = ex.takeover_needed()
 
     def roll_back(reason):
+        log.warning("rolling back: %s", reason)
         restore(paths, snapdir, meta)
         try:
             ex.rollback(takeover, old_cfg, changed)
@@ -143,6 +177,7 @@ def apply_once(paths, ex, confirm_seconds=CONFIRM_SECONDS, poll=0.5, now=time.ti
             reason += f" (rollback commands reported: {e})"
         updatemode_reset(paths)            # the firewall was reloaded, so an open update window is gone too
         set_status(paths, state="rolled-back", reason=reason)
+        _clear_marker(paths)
         return "rolled-back"
 
     changed = set()
@@ -156,6 +191,8 @@ def apply_once(paths, ex, confirm_seconds=CONFIRM_SECONDS, poll=0.5, now=time.ti
             changed.add(rel)
     changed |= set(old_managed) - set(files)
 
+    _write(os.path.join(paths.etc, INPROGRESS), json.dumps({"since": now(), "changed": sorted(changed)}))
+    log.info("applying: %d files, %d changed%s", len(files), len(changed), ", network takeover" if takeover else "")
     set_status(paths, state="applying")
     try:
         for rel, text in files.items():
@@ -178,6 +215,7 @@ def apply_once(paths, ex, confirm_seconds=CONFIRM_SECONDS, poll=0.5, now=time.ti
     except FileNotFoundError:
         pass
     deadline = now() + confirm_seconds
+    log.info("activated; waiting up to %d s for the user to confirm in the WebUI", confirm_seconds)
     set_status(paths, state="pending-confirm", deadline=deadline, seconds=confirm_seconds)
     while now() < deadline:
         if os.path.lexists(confirm):
@@ -191,6 +229,8 @@ def apply_once(paths, ex, confirm_seconds=CONFIRM_SECONDS, poll=0.5, now=time.ti
     except FileNotFoundError:
         pass
     set_status(paths, state="applied")
+    _clear_marker(paths)
+    log.info("confirmed: the new configuration is now the active one")
     return "applied"
 
 

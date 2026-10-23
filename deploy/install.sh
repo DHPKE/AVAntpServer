@@ -73,10 +73,23 @@ exec runuser -u avantp -- env PYTHONPATH=/opt/avantp python3 -m avantp passwd "$
 WRAP
 chmod 755 /usr/local/sbin/avantp-passwd
 
+# ---- the journal must survive a crash: by default it is written to disk only every 5 minutes, so after a power
+# loss or reset the last minutes (the interesting ones) are missing. Keep it on disk and flush it every 5 seconds.
+mkdir -p /etc/systemd/journald.conf.d
+cat > /etc/systemd/journald.conf.d/avantp.conf <<'JRN'
+[Journal]
+Storage=persistent
+SyncIntervalSec=5s
+SystemMaxUse=300M
+MaxRetentionSec=1month
+JRN
+mkdir -p /var/log/journal
+
 # ---- services
 cp "$SRC"/deploy/systemd/avantp-* /etc/systemd/system/
 if [ -n "$SD" ]; then
   systemctl daemon-reload
+  systemctl restart systemd-journald >/dev/null 2>&1 || true
   systemctl disable nftables.service >/dev/null 2>&1 || true   # Debian's own unit would flush our rules at boot
   pkill -f "[a]vantp web" 2>/dev/null || true                  # a hand-started WebUI would hold port 8443
   sleep 1
@@ -100,7 +113,7 @@ if [ ! -f "$DATA/users.json" ]; then
 fi
 
 if [ -n "$SD" ]; then
-  systemctl enable avantp-nftables.service avantp-apply.path avantp-update.path >/dev/null 2>&1
+  systemctl enable avantp-recover.service avantp-nftables.service avantp-apply.path avantp-update.path >/dev/null 2>&1
   systemctl enable --now avantp-web.service avantp-apply.path avantp-update.path avantp-timecode.service
   systemctl restart avantp-web.service avantp-timecode.service   # a re-run must not leave the old code running in memory
   sleep 1

@@ -1,0 +1,17 @@
+#!/bin/sh
+# a stand-in for journalctl with the two boots the box had: boot -1 ended abruptly (no shutdown logged)
+args="$*"
+case "$args" in
+ *--list-boots*) echo '[{"index":-1,"boot_id":"b1","first_entry":1792777049000000,"last_entry":1792781735000000},{"index":0,"boot_id":"b2","first_entry":1792781781000000,"last_entry":1792781900000000}]';;
+ *"-o cat"*) echo "avantp-timecode: Started avantp-timecode.service";;       # no 'Reached target reboot': it just stopped
+ *" -k"*) echo "Oct 23 20:48:27 avantpserver kernel: igb 0000:03:00.0 enp3s0: igb: enp3s0 NIC Link is Up 100 Mbps Full Duplex"
+          echo "Oct 23 20:48:27 avantpserver kernel: igb 0000:03:00.0 enp3s0: Link Speed was downgraded by SmartSpeed";;
+ *"-b -1"*) echo "Oct 23 20:55:35 avantpserver systemd[1]: Started avantp-timecode.service - AVAntpServer timecode sender.";;
+ *"-p err"*) echo "Oct 23 20:56:30 avantpserver python3[812]: timecode: ERROR unexpected error in the sender loop (failure 1 in a row)"
+             echo "Traceback (most recent call last):";;
+ *) echo "Oct 23 20:56:21 avantpserver python3[700]: timecode: INFO timecode sender started"
+    echo "Oct 23 20:56:22 avantpserver python3[700]: timecode: INFO VLAN 20 show: Art-Net sending 25 fps, zone UTC, to 10.2.31.255:6454"
+    echo "Oct 23 20:56:30 avantpserver python3[812]: timecode: ERROR unexpected error in the sender loop (failure 1 in a row)"
+    echo "Traceback (most recent call last):"
+    echo "Oct 23 20:56:31 avantpserver python3[700]: apply: WARNING rolling back: not confirmed within 90 s";;
+esac

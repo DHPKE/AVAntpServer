@@ -1,3 +1,4 @@
+import logging
 import os
 import sys
 
@@ -101,12 +102,17 @@ def web(data_dir, host, port):
 
 
 def main(argv):
+    logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(name)s: %(levelname)s %(message)s")
     if len(argv) == 3 and argv[1] == "passwd":
         return passwd(paths()[0], argv[2])
     if len(argv) == 4 and argv[1] == "web":
         return web(paths()[0], argv[2], int(argv[3]))
     if len(argv) >= 2 and argv[1] == "apply":
         return run_apply(argv[2:])
+    if len(argv) == 2 and argv[1] == "recover":
+        from . import apply
+        print("recover:", apply.recover(apply.Paths()), flush=True)
+        return 0
     if len(argv) == 2 and argv[1] == "timecode":
         return run_timecode()
     if len(argv) >= 2 and argv[1] == "update-mode":

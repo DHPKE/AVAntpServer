@@ -72,6 +72,13 @@ textarea{resize:vertical;min-height:70px}
 .badge{display:inline-block;padding:2px 7px;border-radius:4px;background:rgba(var(--accent-rgb),.18);color:var(--accent);font-size:9px;font-weight:700}
 @media(max-width:900px){.grid,.sform{grid-template-columns:1fr}}
 input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
+
+.logbar{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:10px}
+.logbar .f{min-width:130px}.logbar select{min-width:130px}
+.logbox{background:var(--field);border:1px solid var(--border);border-radius:6px;padding:10px 12px;height:52vh;overflow:auto;font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.logbox .ln.bad{color:var(--red)}.logbox .ln.warn{color:var(--yellow)}.logbox .ln.dim{color:var(--muted)}
+.pillbtn{padding:2px 9px;border-radius:12px;border:1px solid var(--border);font-size:9px;font-weight:700;letter-spacing:.08em}
+.pillbtn.bad{color:var(--red);border-color:var(--red)}.pillbtn.good{color:var(--ok);border-color:var(--ok)}.pillbtn.warn{color:var(--yellow);border-color:var(--yellow)}
 </style>
 </head>
 <body>
@@ -108,6 +115,9 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
   <div class="banner red" v-if="recent(ap) && ap.state==='rolled-back'">Rolled back: {{ ap.reason }}</div>
   <div class="banner red" v-if="recent(ap) && ap.state==='error'">Apply refused: {{ ap.error }}</div>
   <div class="banner ok" v-if="recent(ap, 60) && ap.state==='applied'">Applied and confirmed.</div>
+  <div class="banner red" v-if="restartNotice">The box restarted unexpectedly: the previous boot ended at <b>{{ restartNotice.at }}</b> without a shutdown (power loss, reset or crash).
+    <button class="btn ghost" style="margin-left:12px" @click="tab='log'">OPEN LOG</button>
+    <button class="btn ghost" style="margin-left:6px" @click="dismissRestart">DISMISS</button></div>
   <div class="banner" v-if="um.state==='on'">UPDATE MODE is on: this box may reach package servers (web ports 80/443 on the WAN) for another <b>{{ umLeftText }}</b>. It closes by itself.</div>
   <div class="banner red" v-if="draft && draft.wan.commissioning">COMMISSIONING is on: SSH and this WebUI are reachable from the WAN side. Switch it off in NETWORK once a management VLAN works.</div>
 
@@ -248,6 +258,39 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
   <div class="sst" :class="msgCls" v-if="msg">{{ msg }}</div>
   <div class="actions"><button class="btn" :disabled="busy" @click="save">SAVE</button></div>
   </template>
+
+  <!-- LOG -->
+  <div class="grid" v-if="tab==='log'">
+    <div class="card full">
+      <div class="lbl">Log</div>
+      <div class="logbar">
+        <div class="f"><label class="slbl">Source</label><select v-model="logSel.source" @change="loadLog">
+          <option value="all">All AVAntp services</option><option value="web">WebUI</option><option value="apply">Apply (network, firewall)</option>
+          <option value="timecode">Timecode sender</option><option value="update">Update mode</option><option value="firewall">Firewall at boot</option>
+          <option value="chrony">chrony (NTP)</option><option value="network">Network (networkd, DNS)</option><option value="kernel">Kernel (NIC links, hardware)</option></select></div>
+        <div class="f"><label class="slbl">Level</label><select v-model="logSel.level" @change="loadLog">
+          <option value="all">Everything</option><option value="warning">Warnings and errors</option><option value="error">Errors only</option></select></div>
+        <div class="f"><label class="slbl">Boot</label><select v-model.number="logSel.boot" @change="loadLog">
+          <option :value="0">This boot</option><option :value="-1">Previous boot</option><option :value="-2">2 boots ago</option><option :value="-3">3 boots ago</option></select></div>
+        <div class="f"><label class="slbl">Lines</label><select v-model.number="logSel.lines" @change="loadLog"><option>100</option><option>200</option><option>500</option><option>1000</option></select></div>
+        <label class="chk" style="margin-bottom:6px"><input type="checkbox" v-model="logSel.auto"> update every 3 s</label>
+        <button class="btn ghost" @click="loadLog(); loadBoots()">REFRESH</button>
+        <button class="btn ghost" @click="copyLog">COPY</button>
+      </div>
+      <div class="sst err" v-if="logErr" style="margin:0 0 10px">{{ logErr }}</div>
+      <div class="logbox" ref="logbox"><template v-if="logLines.length"><div v-for="(l, i) in logLines" :key="i" class="ln" :class="logCls(l)">{{ l }}</div></template>
+        <div v-else class="ln dim">{{ logLoaded ? 'No log lines for this selection.' : 'Loading…' }}</div></div>
+      <div class="smeta" style="text-align:left;margin-top:8px">{{ logLines.length }} lines. Errors are red, warnings yellow. A crash of a service shows up as "Traceback" or "unhandled exception" under <b>All AVAntp services</b>; a power loss or reset shows up below as a boot that "ended abruptly".</div>
+    </div>
+    <div class="card full">
+      <div class="lbl">Boot history</div>
+      <table v-if="boots.length"><thead><tr><th>Boot</th><th>Started</th><th>Last log entry</th><th>How it ended</th></tr></thead>
+        <tbody><tr v-for="b in boots" :key="b.index"><td>{{ b.index === 0 ? 'this boot' : b.index }}</td><td>{{ dt(b.first) }}</td><td>{{ dt(b.last) }}</td>
+          <td><span class="pillbtn" :class="b.ended === 'clean' ? 'good' : b.ended === 'running' ? 'good' : 'bad'">{{ b.ended === 'clean' ? 'clean shutdown' : b.ended === 'running' ? 'running' : 'ended abruptly' }}</span>
+            <span v-if="b.ended === 'abrupt'" style="color:var(--muted);font-size:10px"> no shutdown was logged: power loss, reset or crash</span></td></tr></tbody></table>
+      <div v-else class="smeta" style="text-align:left">{{ bootsErr || 'No boot history available.' }}</div>
+    </div>
+  </div>
 
   <!-- SYSTEM -->
   <div class="sform" v-if="tab==='system'">

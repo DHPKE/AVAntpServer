@@ -71,6 +71,52 @@ class TimeMath(unittest.TestCase):
             self.assertEqual(tcm.artnet_packet(0, 0, 0, 0, fps)[18], typ)
 
 
+class SupervisionTest(unittest.TestCase):
+    def test_the_sender_loop_survives_an_unexpected_error_and_logs_it(self):
+        from unittest import mock
+        d = tempfile.mkdtemp()
+        s = tcm.Sender(os.path.join(d, "c.json"), os.path.join(d, "s.json"))
+        calls = {"n": 0}
+
+        def flaky():
+            calls["n"] += 1
+            if calls["n"] <= 2:
+                raise RuntimeError("bug in the sender")
+            if calls["n"] == 3:
+                return None
+            raise SystemExit                       # ends the test: SystemExit is not an Exception, so the loop lets it out
+        s.tick = flaky
+        with mock.patch("avantp.timecode.time.sleep") as sl, self.assertLogs("timecode", "ERROR") as cm:
+            with self.assertRaises(SystemExit):
+                s.run()
+        self.assertEqual(calls["n"], 4)                                    # it kept going after both failures
+        self.assertTrue(any("unexpected error in the sender loop (failure 2 in a row)" in m for m in cm.output))
+        self.assertTrue(any("Traceback" in m and "bug in the sender" in m for m in cm.output))          # with the traceback
+        self.assertIn(1, [c.args[0] for c in sl.call_args_list])           # backs off, so a permanent fault cannot spin
+        self.assertIn(2, [c.args[0] for c in sl.call_args_list])
+
+    def test_state_changes_are_logged_once_not_every_frame(self):
+        d = tempfile.mkdtemp()
+        cfg = copy.deepcopy(BASE)
+        for v in cfg["vlans"]:
+            v["timecode"] = {"artnet": False, "mtc_rtp": False, "fps": 25}
+        cfg["vlans"][1]["timecode"]["artnet"] = True
+        json.dump(config.dump(config.validate(cfg)), open(os.path.join(d, "c.json"), "w"))
+        rx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        rx.bind(("127.0.0.1", 0))
+        s = tcm.Sender(os.path.join(d, "c.json"), os.path.join(d, "s.json"), dest_override=("127.0.0.1", "127.0.0.1", rx.getsockname()[1]))
+        with self.assertLogs("timecode", "INFO") as cm:
+            end = time.time() + 0.6
+            while time.time() < end:
+                s.tick()
+                time.sleep(0.004)
+        rx.close()
+        sending = [m for m in cm.output if "Art-Net sending" in m]
+        self.assertEqual(len(sending), 1, cm.output)                       # ~15 frames were sent, one log line
+        self.assertIn("VLAN 20 show", sending[0])
+        self.assertTrue(any("configuration loaded" in m for m in cm.output))
+
+
 class AddressTest(unittest.TestCase):
     def test_broadcast_is_derived_when_the_kernel_has_none(self):
         from unittest import mock

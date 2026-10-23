@@ -190,6 +190,27 @@ await ev(`[...document.querySelectorAll('.btn.ghost')].find(b=>b.textContent.inc
 check('VLANS tab: a new, unsaved DHCP row says it is not applied yet', (await text()).includes('not applied yet'))
 await tab('MONITOR'); await sleep(400)
 
+// LOG tab: the journal in the browser, and a warning after an unclean restart
+t = await text()
+check('unclean restart is announced after login (the previous boot ended without a shutdown)', t.includes('The box restarted unexpectedly') && /previous boot ended at/.test(t), t.slice(0, 200))
+await tab('LOG'); await sleep(900)
+t = await text()
+check('LOG tab shows the AVAntp services log', t.includes('timecode sender started') && t.includes('Art-Net sending 25 fps'), t.slice(0, 300))
+check('errors are red and warnings yellow', await ev(`(() => { const l = [...document.querySelectorAll('.logbox .ln')]; const c = k => l.filter(x => x.textContent.includes(k)); return c('unexpected error')[0].classList.contains('bad') && c('Traceback')[0].classList.contains('bad') && c('rolling back')[0].classList.contains('warn') && !c('sender started')[0].classList.contains('bad') })()`))
+await setVal('.logbar select', 'kernel'); await sleep(700)
+t = await text()
+check('source "kernel" shows NIC link messages (SmartSpeed downgrade is flagged)', t.includes('Link Speed was downgraded by SmartSpeed') && await ev(`[...document.querySelectorAll('.logbox .ln')].some(x => x.textContent.includes('SmartSpeed') && x.classList.contains('warn'))`))
+await setVal('.logbar select', 'all'); await sleep(300)
+await ev(`(() => { const s = document.querySelectorAll('.logbar select')[1]; s.value = 'error'; s.dispatchEvent(new Event('change')) })()`); await sleep(700)
+check('level "errors only" asks for errors and shows them', (await text()).includes('unexpected error') && !(await text()).includes('sender started'))
+t = await text()
+check('boot history says the previous boot ended abruptly, this one is running', t.includes('ended abruptly') && t.includes('no shutdown was logged') && /this boot[\s\S]*running/i.test(t), t.slice(t.indexOf('BOOT HISTORY'), t.indexOf('BOOT HISTORY') + 400))
+await click('.logbar .btn.ghost'); await sleep(500)
+check('LOG tab keeps running without errors (auto-refresh)', (await ev(`document.querySelectorAll('.logbox .ln').length`)) > 0)
+await ev(`[...document.querySelectorAll('.banner .btn')].find(b => b.textContent.includes('DISMISS')).click()`); await sleep(300)
+check('the restart notice can be dismissed (and stays dismissed)', !(await text()).includes('The box restarted unexpectedly'))
+await tab('MONITOR'); await sleep(400)
+
 // the upstream sources card folds, says what it hides, and remembers that across a reload
 const srcShown = () => ev(`[...document.querySelectorAll('.card')].some(c => c.textContent.includes('Upstream sources') && c.querySelector('table'))`)
 check('upstream sources: still unfolded, as left earlier in this browser', await srcShown())

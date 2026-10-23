@@ -1,0 +1,15 @@
+[Unit]
+Description=Undo an AVAntpServer apply that was cut short by a restart or crash
+DefaultDependencies=no
+After=local-fs.target
+Before=avantp-nftables.service systemd-networkd.service network-pre.target
+
+[Service]
+Type=oneshot
+Environment=PYTHONPATH=/opt/avantp
+ExecStart=/usr/bin/python3 -m avantp recover
+RuntimeDirectory=avantp
+RuntimeDirectoryPreserve=yes
+
+[Install]
+WantedBy=sysinit.target

@@ -12,9 +12,11 @@ import ssl
 import sys
 import threading
 import time
+import traceback
 from http import cookies
+from urllib.parse import parse_qs, urlsplit
 
-from . import auth, config, status
+from . import auth, config, logs, status
 
 UI_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ui")
 STATIC = {"/": ("index.html", "text/html; charset=utf-8"), "/app.js": ("app.js", "text/javascript"),
@@ -129,8 +131,25 @@ def make_handler(app):
             flags = "HttpOnly; SameSite=Strict; Path=/; Max-Age=%d" % max_age
             return ("Set-Cookie", f"sid={tok}; {flags}" + ("; Secure" if app.tls else ""))
 
-        # ---- routing
+        # ---- routing: an unexpected error is written to the journal with its traceback and answered with a clean 500,
+        # so a bug in one request can neither kill the service silently nor leave the browser hanging
+        def guarded(self, fn):
+            try:
+                fn()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            except Exception:
+                sys.stderr.write("ERROR unhandled exception in %s %s from %s\n%s\n"
+                                 % (self.command, self.path.split("?")[0], self.client_address[0], traceback.format_exc()))
+                try:
+                    self.err(500, "internal error: see the Log tab")
+                except Exception:
+                    pass
+
         def do_GET(self):
+            self.guarded(self._get)
+
+        def _get(self):
             path = self.path.split("?")[0]
             if path in STATIC:
                 name, ctype = STATIC[path]
@@ -152,13 +171,22 @@ def make_handler(app):
                 return self.send(200, app.update_status())
             if path == "/api/timecode":
                 return self.send(200, app.timecode_status())
+            if path == "/api/logs":
+                q = {k: v[0] for k, v in parse_qs(urlsplit(self.path).query).items()}
+                try:
+                    return self.send(200, logs.tail(q.get("source", "all"), q.get("level", "all"),
+                                                     q.get("lines", "200"), q.get("boot", "0")))
+                except (ValueError, TypeError):
+                    return self.err(400, "bad log request")
+            if path == "/api/boots":
+                return self.send(200, logs.boots())
             self.err(404, "not found")
 
         def do_POST(self):
-            self.mutate(post=True)
+            self.guarded(lambda: self.mutate(post=True))
 
         def do_PUT(self):
-            self.mutate(post=False)
+            self.guarded(lambda: self.mutate(post=False))
 
         def mutate(self, post):
             path = self.path.split("?")[0]
@@ -173,7 +201,9 @@ def make_handler(app):
                 u, p = str(data.get("user", "")), str(data.get("password", ""))
                 if not app.users.check(u, p):
                     app.sessions.fail(ip)
+                    sys.stderr.write("WARNING login failed for %r from %s\n" % (u[:32], ip))
                     return self.err(401, "wrong user or password")
+                sys.stderr.write("login ok: %s from %s\n" % (u, ip))
                 tok, csrf = app.sessions.create(u)
                 return self.send(200, {"user": u, "csrf": csrf, "version": version()}, extra=[self.cookie(tok, auth.SESSION_TTL)])
             tok, s = self.session()

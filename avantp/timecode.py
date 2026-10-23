@@ -10,6 +10,7 @@ so an apply takes effect without restarting this service.
 import datetime
 import ipaddress
 import json
+import logging
 import os
 import socket
 import struct
@@ -19,6 +20,7 @@ import zoneinfo
 
 from . import config
 
+log = logging.getLogger("timecode")
 ARTNET_PORT = 6454
 ARTNET_OPCODE_TIMECODE = 0x9700
 # ArtTimeCode "Type": 0 = 24 fps, 1 = 25 fps, 2 = 29.97 fps (drop frame), 3 = 30 fps
@@ -95,12 +97,15 @@ class Sender:
             if mtime == self.cfg_mtime:
                 return
             cfg = config.load(self.cfg_path)
-        except (OSError, ValueError, config.ConfigError):
+        except (OSError, ValueError, config.ConfigError) as e:
             if self.cfg_mtime is None:
                 self.cfg_mtime = -1
+                log.warning("no usable configuration yet (%s); sending nothing until there is one", e)
             return
         self.cfg_mtime = mtime
         self.cfg = cfg
+        log.info("configuration loaded: %d VLANs, Art-Net on for %s", len(cfg["vlans"]),
+                 [v["id"] for v in cfg["vlans"] if v["timecode"]["artnet"]] or "none")
         keep = {}
         for v in cfg["vlans"]:
             old = self.outputs.get(v["id"])
@@ -113,6 +118,13 @@ class Sender:
             if vid not in keep and o.get("sock"):
                 o["sock"].close()
         self.outputs = keep
+
+    def _state(self, vid, o, state, detail=""):
+        """Write every change of a VLAN's output state to the log (and nothing while it stays the same)."""
+        if o.get("logged") != (state, detail):
+            o["logged"] = (state, detail)
+            msg = f"VLAN {vid} {o['name']}: Art-Net {state}{' ' + detail if detail else ''}"
+            (log.warning if state in ("error", "no-address") else log.info)(msg)
 
     def refresh_addresses(self):
         if self.now() - self.addr_at >= 2:
@@ -137,6 +149,7 @@ class Sender:
                     o["sock"].close()
                     o["sock"] = None
                 o["error"] = None
+                self._state(vid, o, "off")
                 continue
             rate = FRAME_RATE[o["fps"]]
             local_ip, bcast = self.addr.get(o["iface"], (None, None))
@@ -145,6 +158,7 @@ class Sender:
             if not local_ip:
                 o["error"], o["dest"] = None, None
                 o["state"] = "no-address"
+                self._state(vid, o, "no-address", "(waiting for an IP address on " + o["iface"] + ")")
                 continue
             if o["sock"] is None or o.get("bound") != local_ip:
                 try:
@@ -153,6 +167,7 @@ class Sender:
                     o["sock"], o["bound"] = self._socket(local_ip), local_ip
                 except OSError as e:
                     o["sock"], o["error"], o["state"] = None, str(e), "error"
+                    self._state(vid, o, "error", f"(cannot open a socket on {local_ip}: {e})")
                     continue
             o["dest"] = f"{bcast}:{ARTNET_PORT}" if not self.dest_override else f"{bcast}:{self.dest_override[2]}"
             if o["next"] == 0 or t - o["next"] > 1.0:          # first frame, or we fell behind: realign
@@ -166,8 +181,10 @@ class Sender:
                     o["sock"].sendto(artnet_packet(*tc, o["fps"]), (bcast, port))
                     o["sent"] += 1
                     o["last"], o["error"], o["state"] = fmt(tc), None, "sending"
+                    self._state(vid, o, "sending", f"{o['fps']} fps, zone {o['tz']}, to {o['dest']}")
                 except OSError as e:
                     o["error"], o["state"] = str(e), "error"
+                    self._state(vid, o, "error", f"(send to {o['dest']} failed: {e})")
                 o["next"] += 1 / rate
             nxt = o["next"] if nxt is None else min(nxt, o["next"])
         self.write_status()
@@ -193,8 +210,18 @@ class Sender:
         os.replace(tmp, self.status_path)
 
     def run(self):
+        log.info("timecode sender started")
+        failures = 0
         while True:
-            nxt = self.tick()
+            try:
+                nxt = self.tick()
+                failures = 0
+            except Exception:
+                # never die on a bug: log it with its traceback, wait a moment (so a persistent fault cannot spin), carry on
+                failures += 1
+                log.exception("unexpected error in the sender loop (failure %d in a row)", failures)
+                time.sleep(min(30, failures))
+                continue
             wait = 0.5 if nxt is None else max(0.0, min(0.5, nxt - self.now()))
             time.sleep(wait)
 
