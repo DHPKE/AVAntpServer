@@ -95,6 +95,7 @@ fi
 if [ -n "$SD" ]; then
   systemctl enable avantp-nftables.service avantp-apply.path >/dev/null 2>&1
   systemctl enable --now avantp-web.service avantp-apply.path
+  systemctl restart avantp-web.service   # a re-run must not leave the old code running in memory
   sleep 1
   systemctl is-active avantp-web.service avantp-apply.path
 fi

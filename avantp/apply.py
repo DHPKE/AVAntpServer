@@ -224,13 +224,25 @@ class SystemExecutor:
     def preflight(self, files):
         """Let the real tools judge the new files before anything is touched."""
         with tempfile.TemporaryDirectory() as d:
-            for name, rel in (("nft", "etc/avantp/nftables.nft"), ("chrony", "etc/chrony/chrony.conf")):
-                with open(os.path.join(d, name), "w") as f:
-                    f.write(files[rel])
-            for argv in (["nft", "-c", "-f", os.path.join(d, "nft")], ["chronyd", "-p", "-f", os.path.join(d, "chrony")]):
-                r = subprocess.run(argv, capture_output=True, text=True)
-                if r.returncode:
-                    return False, f"{argv[0]}: {(r.stderr or r.stdout).strip()[:300]}"
+            nft = os.path.join(d, "nft")
+            with open(nft, "w") as f:
+                f.write(files["etc/avantp/nftables.nft"])
+            r = subprocess.run(["nft", "-c", "-f", nft], capture_output=True, text=True)
+            if r.returncode:
+                return False, f"nft: {(r.stderr or r.stdout).strip()[:300]}"
+        # chronyd drops privileges (and Debian confines it with AppArmor) before it reads the file, so a private
+        # temp directory is unreadable for it: check the candidate inside /etc/chrony, world-readable, then remove it
+        cand = self.p.under("etc/chrony/.avantp-preflight.conf")
+        try:
+            _write(cand, files["etc/chrony/chrony.conf"], 0o644)
+            r = subprocess.run(["chronyd", "-p", "-f", cand], capture_output=True, text=True)
+        finally:
+            try:
+                os.unlink(cand)
+            except FileNotFoundError:
+                pass
+        if r.returncode:
+            return False, f"chronyd: {(r.stderr or r.stdout).strip()[:300]}"
         return True, ""
 
     def takeover_needed(self):

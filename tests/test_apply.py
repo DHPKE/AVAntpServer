@@ -136,6 +136,44 @@ class ApplyTest(unittest.TestCase):
         self.assertEqual(os.readlink(self.f("etc/resolv.conf")), "../run/systemd/resolve/stub-resolv.conf")
 
 
+class PreflightTest(unittest.TestCase):
+    def test_chrony_candidate_is_readable_by_the_unprivileged_chronyd_and_cleaned_up(self):
+        import stat
+        from unittest import mock
+        from avantp import render
+        root = tempfile.mkdtemp()
+        os.makedirs(os.path.join(root, "etc/chrony"))
+        ex = apply.SystemExecutor(apply.Paths(root))
+        seen = {}
+
+        def fake_run(argv, **kw):
+            if argv[0] == "chronyd":
+                path = argv[-1]
+                seen["path"], seen["mode"] = path, stat.S_IMODE(os.stat(path).st_mode)
+                seen["dir_mode"] = stat.S_IMODE(os.stat(os.path.dirname(path)).st_mode)
+            return mock.Mock(returncode=0, stdout="", stderr="")
+        with mock.patch("avantp.apply.subprocess.run", fake_run):
+            ok, why = ex.preflight(render.render_all(config.validate(copy.deepcopy(BASE))))
+        self.assertTrue(ok, why)
+        self.assertEqual(os.path.dirname(seen["path"]), os.path.join(root, "etc/chrony"))   # where AppArmor allows reads
+        self.assertTrue(seen["mode"] & 0o044 and seen["dir_mode"] & 0o055)                    # others can read + traverse
+        self.assertEqual(os.listdir(os.path.join(root, "etc/chrony")), [])                    # nothing left behind
+
+    def test_failure_text_is_reported(self):
+        from unittest import mock
+        from avantp import render
+        root = tempfile.mkdtemp()
+        os.makedirs(os.path.join(root, "etc/chrony"))
+        ex = apply.SystemExecutor(apply.Paths(root))
+        files = render.render_all(config.validate(copy.deepcopy(BASE)))
+        with mock.patch("avantp.apply.subprocess.run",
+                        lambda argv, **kw: mock.Mock(returncode=1 if argv[0] == "chronyd" else 0, stdout="", stderr="bad directive")):
+            ok, why = ex.preflight(files)
+        self.assertFalse(ok)
+        self.assertIn("bad directive", why)
+        self.assertEqual(os.listdir(os.path.join(root, "etc/chrony")), [])
+
+
 class TakeoverTest(unittest.TestCase):
     def test_takeover_hands_dns_to_resolved_and_disables_ifupdown(self):
         root = tempfile.mkdtemp()
