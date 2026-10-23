@@ -45,7 +45,7 @@ def networkd(cfg):
     files = {}
     w = [HDR, f"[Match]\nName={wan['iface']}\n\n[Network]\nLinkLocalAddressing=no\nIPv6AcceptRA=no\n"]
     if wan["mode"] == "dhcp":
-        w.append("DHCP=ipv4\n\n[DHCPv4]\nUseNTP=no\nUseHostname=no\nUseDomains=no\n")
+        w.append("DHCP=ipv4\n\n[DHCPv4]\nClientIdentifier=mac\nUseNTP=no\nUseHostname=no\nUseDomains=no\n")
     else:
         w.append(f"Address={wan['address']}\nGateway={wan['gateway']}\n")
         for d in wan["dns"]:

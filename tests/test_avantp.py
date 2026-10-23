@@ -186,6 +186,11 @@ class Render(unittest.TestCase):
         self.assertEqual(n.count("udp dport 6454"), 1)  # only VLAN 20 enabled it
         self.assertNotIn("5004", n)
 
+    def test_wan_dhcp_identifies_itself_by_mac(self):
+        wan = render.networkd(cfg())["10-avantp-wan.network"]
+        self.assertIn("ClientIdentifier=mac", wan)          # the router recognises the box by MAC, so it keeps its address
+        self.assertNotIn("ClientIdentifier", render.networkd(cfg())["30-avantp-enp3s0.30.network"])
+
     def test_networkd_lan_never_routes(self):
         files = render.networkd(cfg())
         for name in ("30-avantp-enp3s0.10.network", "30-avantp-enp3s0.20.network", "30-avantp-enp3s0.30.network"):

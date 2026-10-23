@@ -138,12 +138,23 @@ def apply_once(paths, ex, confirm_seconds=CONFIRM_SECONDS, poll=0.5, now=time.ti
     def roll_back(reason):
         restore(paths, snapdir, meta)
         try:
-            ex.rollback(takeover, old_cfg)
+            ex.rollback(takeover, old_cfg, changed)
         except Exception as e:  # keep going: files are already restored
             reason += f" (rollback commands reported: {e})"
         updatemode_reset(paths)            # the firewall was reloaded, so an open update window is gone too
         set_status(paths, state="rolled-back", reason=reason)
         return "rolled-back"
+
+    changed = set()
+    for rel, text in files.items():
+        try:
+            with open(paths.under(rel)) as f:
+                same = f.read() == text
+        except OSError:
+            same = False
+        if not same:
+            changed.add(rel)
+    changed |= set(old_managed) - set(files)
 
     set_status(paths, state="applying")
     try:
@@ -157,7 +168,7 @@ def apply_once(paths, ex, confirm_seconds=CONFIRM_SECONDS, poll=0.5, now=time.ti
         _write(managed_path, json.dumps(sorted(files)))
         if takeover:
             ex.takeover(cfg)
-        ex.activate(cfg, removed, takeover)
+        ex.activate(cfg, removed, takeover, changed)
     except Exception as e:
         return roll_back(f"activation failed: {e}")
     updatemode_reset(paths)
@@ -203,12 +214,13 @@ class FakeExecutor:
     def takeover(self, cfg):
         self.calls.append("takeover")
 
-    def activate(self, cfg, removed, takeover):
+    def activate(self, cfg, removed, takeover, changed=frozenset()):
         self.calls.append(("activate", tuple(removed), takeover))
+        self.last_changed = set(changed)
         if self.fail_activate:
             raise RuntimeError("fake activation failure")
 
-    def rollback(self, takeover, old_cfg):
+    def rollback(self, takeover, old_cfg, changed=frozenset()):
         self.calls.append(("rollback", takeover))
 
     def update_window(self, wan, on, seconds):
@@ -269,18 +281,37 @@ class SystemExecutor:
         os.replace(link + ".avantp", link)
         self.sh("systemctl", "enable", "systemd-networkd")
 
-    def activate(self, cfg, removed, takeover):
+    @staticmethod
+    def links_of(changed, cfg):
+        """Network interfaces whose generated networkd files changed: only those may be reconfigured, because a
+        reconfigure drops the link's DHCP lease (and a new lease can mean a new address for the box)."""
+        out = set()
+        for rel in changed:
+            name = os.path.basename(rel)
+            if not rel.startswith("etc/systemd/network/"):
+                continue
+            if name == "10-avantp-wan.network":
+                out.add(cfg["wan"]["iface"])
+            elif name == "20-avantp-lan.network":
+                out.add(cfg["lan"]["iface"])
+            elif name.startswith("30-avantp-"):
+                out.add(name[len("30-avantp-"):].rsplit(".", 1)[0])
+        return out
+
+    def activate(self, cfg, removed, takeover, changed=frozenset()):
         self.sh("sysctl", "-p", self.p.under("etc/sysctl.d/90-avantp.conf"))
         self.sh("nft", "-f", self.p.under("etc/avantp/nftables.nft"))
         for i in removed:
             self.sh("ip", "link", "delete", i, check=False)
         self.sh("systemctl", "enable", "--now", "systemd-resolved", "systemd-networkd")
         self.sh("networkctl", "reload")
-        names = [cfg["wan"]["iface"], cfg["lan"]["iface"]] + [f"{cfg['lan']['iface']}.{v['id']}" for v in cfg["vlans"]]
+        names = ([cfg["wan"]["iface"], cfg["lan"]["iface"]] + [f"{cfg['lan']['iface']}.{v['id']}" for v in cfg["vlans"]]
+                 if takeover else sorted(self.links_of(changed, cfg)))
         for n in names:
             self.sh("networkctl", "reconfigure", n, check=False)
         self.sh("systemctl", "enable", "chrony")
-        self.sh("systemctl", "restart", "chrony")
+        if takeover or "etc/chrony/chrony.conf" in changed:
+            self.sh("systemctl", "restart", "chrony")
 
     def update_window(self, wan, on, seconds):
         """Open (with a kernel timeout) or close the WAN's web access in the firewall's update_window set."""
@@ -289,7 +320,7 @@ class SystemExecutor:
         else:
             self.sh("nft", "delete", "element", "inet", "avantp", "update_window", f'{{ "{wan}" }}', check=False)
 
-    def rollback(self, takeover, old_cfg):
+    def rollback(self, takeover, old_cfg, changed=frozenset()):
         """Files are already restored; make the running system match them again."""
         nft = self.p.under("etc/avantp/nftables.nft")
         if os.path.exists(nft):
@@ -303,5 +334,8 @@ class SystemExecutor:
             self.sh("systemctl", "restart", "networking", check=False)
         else:
             self.sh("networkctl", "reload", check=False)
-        self.sh("systemctl", "restart", "chrony", check=False)
+            for n in sorted(self.links_of(changed, old_cfg or {"wan": {"iface": "enp4s0"}, "lan": {"iface": "enp3s0"}})):
+                self.sh("networkctl", "reconfigure", n, check=False)
+        if takeover or "etc/chrony/chrony.conf" in changed:
+            self.sh("systemctl", "restart", "chrony", check=False)
 

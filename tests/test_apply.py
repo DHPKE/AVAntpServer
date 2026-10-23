@@ -136,6 +136,72 @@ class ApplyTest(unittest.TestCase):
         self.assertEqual(os.readlink(self.f("etc/resolv.conf")), "../run/systemd/resolve/stub-resolv.conf")
 
 
+class ChangedOnlyTest(unittest.TestCase):
+    """A reconfigure drops a link's DHCP lease and may give the box a different address: only touch what changed."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.p = apply.Paths(self.root)
+        os.makedirs(self.p.data)
+        os.makedirs(self.p.run)
+        self.ex = apply.FakeExecutor()
+
+    def run_apply(self, cfg):
+        json.dump(cfg, open(os.path.join(self.p.data, "pending.json"), "w"))
+
+        def press():
+            while not os.path.exists(os.path.join(self.p.run, "status.json")) or \
+                    json.load(open(os.path.join(self.p.run, "status.json"))).get("state") != "pending-confirm":
+                time.sleep(0.02)
+            open(os.path.join(self.p.data, "confirm"), "w").close()
+        threading.Thread(target=press, daemon=True).start()
+        return apply.apply_once(self.p, self.ex, confirm_seconds=3, poll=0.02)
+
+    def test_reapplying_the_same_config_changes_nothing(self):
+        self.assertEqual(self.run_apply(BASE), "applied")
+        self.assertIn("etc/systemd/network/10-avantp-wan.network", self.ex.last_changed)       # first time: everything is new
+        self.assertEqual(self.run_apply(BASE), "applied")
+        self.assertEqual(self.ex.last_changed, set())
+
+    def test_a_vlan_edit_does_not_touch_the_wan(self):
+        self.run_apply(BASE)
+        edited = copy.deepcopy(BASE)
+        edited["vlans"][0]["address"] = "10.10.10.3/24"
+        self.run_apply(edited)
+        net = {r for r in self.ex.last_changed if r.startswith("etc/systemd/network/")}
+        self.assertEqual(net, {"etc/systemd/network/30-avantp-enp3s0.10.network"})     # no WAN file, no other VLAN
+        self.assertIn("etc/avantp/nftables.nft", self.ex.last_changed)                  # the firewall pins the address, so it changes too
+
+    def test_system_executor_reconfigures_only_changed_links(self):
+        ex = apply.SystemExecutor(self.p)
+        ran = []
+        ex.sh = lambda *argv, check=True, timeout=60: ran.append(argv)
+        cfg = config.validate(copy.deepcopy(BASE))
+        ex.activate(cfg, [], False, {"etc/systemd/network/30-avantp-enp3s0.10.network",
+                                     "etc/systemd/network/30-avantp-enp3s0.10.netdev", "etc/avantp/nftables.nft"})
+        reconf = [a[2] for a in ran if a[:2] == ("networkctl", "reconfigure")]
+        self.assertEqual(reconf, ["enp3s0.10"])                       # not enp4s0 (WAN), not the other VLANs
+        self.assertNotIn(("systemctl", "restart", "chrony"), ran)    # chrony.conf unchanged
+        ran.clear()
+        ex.activate(cfg, [], False, set())
+        self.assertEqual([a for a in ran if a[0] == "networkctl" and a[1] == "reconfigure"], [])
+        ran.clear()
+        ex.activate(cfg, [], False, {"etc/systemd/network/10-avantp-wan.network", "etc/chrony/chrony.conf"})
+        self.assertEqual([a[2] for a in ran if a[:2] == ("networkctl", "reconfigure")], ["enp4s0"])
+        self.assertIn(("systemctl", "restart", "chrony"), ran)
+        ran.clear()
+        ex.activate(cfg, [], True, set())                              # takeover: everything is configured from scratch
+        self.assertEqual(len([a for a in ran if a[:2] == ("networkctl", "reconfigure")]), 2 + len(cfg["vlans"]))
+
+    def test_rollback_reconfigures_only_changed_links(self):
+        ex = apply.SystemExecutor(self.p)
+        ran = []
+        ex.sh = lambda *argv, check=True, timeout=60: ran.append(argv)
+        old = config.validate(copy.deepcopy(BASE))
+        ex.rollback(False, old, {"etc/systemd/network/30-avantp-enp3s0.20.network"})
+        self.assertEqual([a[2] for a in ran if a[:2] == ("networkctl", "reconfigure")], ["enp3s0.20"])
+
+
 class UpdateModeTest(unittest.TestCase):
     def setUp(self):
         from avantp import updatemode
