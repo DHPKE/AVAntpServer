@@ -57,8 +57,10 @@ createApp({setup() {
   const chronyRunning = computed(() => !!(status.value && status.value.chrony.running))
   const sources = computed(() => status.value ? status.value.chrony.sources : [])
   const ifaces = computed(() => status.value ? status.value.interfaces : [])
+  // VLAN sub-interfaces (enp3s0.10) are not NICs; never offer them as WAN/LAN
+  const physical = computed(() => ifaces.value.filter(i => !i.name.includes('.')))
   const ifaceNames = computed(() => {
-    const n = ifaces.value.map(i => i.name)
+    const n = physical.value.map(i => i.name)
     for (const k of [draft.value && draft.value.wan.iface, draft.value && draft.value.lan.iface]) if (k && !n.includes(k)) n.push(k)
     return n
   })
@@ -111,6 +113,13 @@ createApp({setup() {
     try { return new Intl.DateTimeFormat('sv-SE', {timeZone: tz || 'UTC', dateStyle: 'short', timeStyle: 'medium'}).format(utcMs.value) }
     catch (_) { return '—' }
   }
+  // the address the system really has on the VLAN interface; falls back to what is configured (not applied yet)
+  function vlanAddr(v) {
+    const c = cfg.value.pending || cfg.value.active || {}
+    const nic = ifaces.value.find(i => i.name === ((c.lan || {}).iface + '.' + v.id))
+    if (nic && nic.addrs.length) return {live: true, text: nic.addrs.join(', ')}
+    return {live: false, text: v.mode === 'static' ? v.address + ' (not active)' : 'DHCP: no lease'}
+  }
   function tcText(v) {
     const t = v.timecode || {}, o = []
     if (t.artnet) o.push('Art-Net'); if (t.mtc_rtp) o.push('MTC-RTP')
@@ -125,8 +134,8 @@ createApp({setup() {
   const cfgVlans = computed(() => ((cfg.value.pending || cfg.value.active || {}).vlans) || [])
   const hasPending = computed(() => !!cfg.value.pending && JSON.stringify(cfg.value.pending) !== JSON.stringify(cfg.value.active))
   function blank() {
-    const n = ifaces.value.map(i => i.name)
-    const wan = (ifaces.value.find(i => i.state === 'up' && i.addrs.length) || {}).name || n[0] || ''
+    const n = physical.value.map(i => i.name)
+    const wan = (physical.value.find(i => i.state === 'up' && i.addrs.length) || {}).name || n[0] || ''
     const lan = n.find(x => x !== wan) || ''
     return {wan: {iface: wan, mode: 'dhcp', commissioning: true}, lan: {iface: lan},
             upstream: {default: ['pool.ntp.org'], backup: ['time.cloudflare.com'], custom: [], local_fallback: false}, vlans: []}
@@ -187,5 +196,5 @@ createApp({setup() {
   onUnmounted(stop)
   return {tabs, tab, user, needsSetup, lu, lp, loginErr, busy, connected, doLogin, doLogout, draft, up, msg, msgCls, pw,
     tr, chronyRunning, sources, ifaces, ifaceNames, syncCls, syncTxt, syncIcon, syncName, fmtS, off, offCls, utcNow,
-    tzLabel, tzGroups, localTime, tcText, cfgVlans, hasPending, draftDirty, wanDns, addVlan, save, changePw}
+    tzLabel, tzGroups, localTime, tcText, vlanAddr, cfgVlans, hasPending, draftDirty, wanDns, addVlan, save, changePw}
 }}).mount('#app')

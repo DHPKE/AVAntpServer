@@ -122,9 +122,9 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
     </div>
     <div class="card full">
       <div class="lbl">VLAN clocks</div>
-      <table v-if="cfgVlans.length"><thead><tr><th>VLAN</th><th>Name</th><th>Address</th><th>Local time</th><th>Time zone</th><th>NTP</th><th>Timecode</th></tr></thead>
+      <table v-if="cfgVlans.length"><thead><tr><th>VLAN</th><th>Name</th><th>IP address</th><th>Local time</th><th>Time zone</th><th>NTP</th><th>Timecode</th></tr></thead>
         <tbody><tr v-for="v in cfgVlans" :key="v.id">
-          <td>{{ v.id }}</td><td>{{ v.name }}</td><td>{{ v.mode==='static' ? v.address : 'DHCP' }}</td>
+          <td>{{ v.id }}</td><td>{{ v.name }}</td><td :class="vlanAddr(v).live ? '' : 'warnc'">{{ vlanAddr(v).text }}</td>
           <td class="good">{{ localTime(v.timezone) }}</td><td>{{ tzLabel(v.timezone) }}</td>
           <td>{{ v.ntp!==false ? 'serving' : 'off' }}</td>
           <td>{{ tcText(v) }}</td></tr></tbody></table>

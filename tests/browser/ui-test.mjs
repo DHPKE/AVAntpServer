@@ -92,6 +92,7 @@ check('NTP defaults loaded', await ev(`document.querySelectorAll('textarea')[0].
 await tab('MONITOR'); await sleep(2500)
 t = await text()
 check('VLAN clocks table shows VLANs with city time zones and current offsets', t.includes('mgmt') && t.includes('show') && /Berlin \(UTC\+0[12]:00\)/.test(t) && /New York \(UTC−0[45]:00\)/.test(t), t.slice(300, 700))
+check('VLAN IPs shown from the live interfaces (static + DHCP lease)', t.includes('10.10.10.2/24') && t.includes('10.20.0.77/24'), t.slice(300, 700))
 check('timecode column: Art-Net on show', t.includes('Art-Net @25'))
 await shot('5-monitor-vlans')
 
