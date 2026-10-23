@@ -7,6 +7,7 @@ and rolls back by itself unless POST /api/confirm arrives in time. This process 
 import copy
 import http.server
 import json
+import logging
 import os
 import ssl
 import sys
@@ -18,6 +19,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from . import auth, config, logs, status
 
+log = logging.getLogger("web")
 UI_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ui")
 STATIC = {"/": ("index.html", "text/html; charset=utf-8"), "/app.js": ("app.js", "text/javascript"),
           "/vue.js": ("vue.global.prod.js", "text/javascript")}
@@ -95,7 +97,7 @@ def make_handler(app):
         sys_version = ""
 
         def log_message(self, fmt, *a):
-            sys.stderr.write("%s %s\n" % (self.client_address[0], fmt % a))
+            log.info("%s %s", self.client_address[0], fmt % a)
 
         # ---- helpers
         def send(self, code, body, ctype="application/json", extra=()):
@@ -144,8 +146,8 @@ def make_handler(app):
             except (BrokenPipeError, ConnectionResetError):
                 pass
             except Exception:
-                sys.stderr.write("ERROR unhandled exception in %s %s from %s\n%s\n"
-                                 % (self.command, self.path.split("?")[0], self.client_address[0], traceback.format_exc()))
+                log.error("unhandled exception in %s %s from %s\n%s", self.command, self.path.split("?")[0],
+                          self.client_address[0], traceback.format_exc().rstrip())
                 try:
                     self.err(500, "internal error: see the Log tab")
                 except Exception:
@@ -208,9 +210,9 @@ def make_handler(app):
                 u, p = str(data.get("user", "")), str(data.get("password", ""))
                 if not app.users.check(u, p):
                     app.sessions.fail(ip)
-                    sys.stderr.write("WARNING login failed for %r from %s\n" % (u[:32], ip))
+                    log.warning("login failed for %r from %s", u[:32], ip)
                     return self.err(401, "wrong user or password")
-                sys.stderr.write("login ok: %s from %s\n" % (u, ip))
+                log.info("login ok: %s from %s", u, ip)
                 tok, csrf = app.sessions.create(u)
                 return self.send(200, {"user": u, "csrf": csrf, "version": version()}, extra=[self.cookie(tok, auth.SESSION_TTL)])
             tok, s = self.session()

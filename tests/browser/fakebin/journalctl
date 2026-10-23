@@ -1,17 +1,22 @@
 #!/bin/sh
-# a stand-in for journalctl with the two boots the box had: boot -1 ended abruptly (no shutdown logged)
+# a stand-in for journalctl with the two boots the box had (boot -1 ended abruptly: no shutdown logged).
+# Like the real box, our own services' lines are stored with PRIORITY 6 (info) even when the text says WARNING/ERROR.
 args="$*"
+j() { printf '{"MESSAGE":"%s","PRIORITY":"%s","_SYSTEMD_UNIT":"%s","__REALTIME_TIMESTAMP":"%s","SYSLOG_IDENTIFIER":"python3","_PID":"700","_HOSTNAME":"avantpserver"}\n' "$1" "$2" "$3" "$4"; }
 case "$args" in
  *--list-boots*) echo '[{"index":-1,"boot_id":"b1","first_entry":1792777049000000,"last_entry":1792781735000000},{"index":0,"boot_id":"b2","first_entry":1792781781000000,"last_entry":1792781900000000}]';;
  *"-o cat"*) echo "avantp-timecode: Started avantp-timecode.service";;       # no 'Reached target reboot': it just stopped
- *" -k"*) echo "Oct 23 20:48:27 avantpserver kernel: igb 0000:03:00.0 enp3s0: igb: enp3s0 NIC Link is Up 100 Mbps Full Duplex"
-          echo "Oct 23 20:48:27 avantpserver kernel: igb 0000:03:00.0 enp3s0: Link Speed was downgraded by SmartSpeed";;
- *"-b -1"*) echo "Oct 23 20:55:35 avantpserver systemd[1]: Started avantp-timecode.service - AVAntpServer timecode sender.";;
- *"-p err"*) echo "Oct 23 20:56:30 avantpserver python3[812]: timecode: ERROR unexpected error in the sender loop (failure 1 in a row)"
-             echo "Traceback (most recent call last):";;
- *) echo "Oct 23 20:56:21 avantpserver python3[700]: timecode: INFO timecode sender started"
-    echo "Oct 23 20:56:22 avantpserver python3[700]: timecode: INFO VLAN 20 show: Art-Net sending 25 fps, zone UTC, to 10.2.31.255:6454"
-    echo "Oct 23 20:56:30 avantpserver python3[812]: timecode: ERROR unexpected error in the sender loop (failure 1 in a row)"
-    echo "Traceback (most recent call last):"
-    echo "Oct 23 20:56:31 avantpserver python3[700]: apply: WARNING rolling back: not confirmed within 90 s";;
+ *" -k"*) j "igb 0000:03:00.0 enp3s0: igb: enp3s0 NIC Link is Up 100 Mbps Full Duplex" 6 "" 1792781700000000
+          j "igb 0000:03:00.0 enp3s0: Link Speed was downgraded by SmartSpeed" 6 "" 1792781701000000
+          j "Hardware Error: machine check" 3 "" 1792781702000000;;
+ *"-b -1"*) j "Started avantp-timecode.service - AVAntpServer timecode sender." 6 "init.scope" 1792781735000000;;
+ *) U=avantp-timecode.service
+    j "timecode: INFO timecode sender started" 6 $U 1792781781000000
+    j "timecode: INFO VLAN 20 show: Art-Net sending 25 fps, zone UTC, to 10.2.31.255:6454" 6 $U 1792781782000000
+    j "timecode: WARNING VLAN 50 sACN: Art-Net no-address (waiting for an IP address on enp3s0.50)" 6 $U 1792781783000000
+    j "timecode: ERROR unexpected error in the sender loop (failure 1 in a row)" 6 $U 1792781790000000
+    j "Traceback (most recent call last):" 6 $U 1792781790100000
+    j "  File x.py line 3 in tick" 6 $U 1792781790200000
+    j "apply: WARNING rolling back: not confirmed within 90 s" 6 avantp-apply.service 1792781791000000
+    j "10.1.10.2 GET /api/status 200" 6 avantp-web.service 1792781792000000;;
 esac
