@@ -54,6 +54,11 @@ for (let i = 0; i < 20 && !(await text()).includes('ntp1.example.org'); i++) awa
 t = await text(); check('login works, monitor shown', t.includes('MONITOR') && t.includes('SYNCED'), t.slice(0, 160))
 check('live pill', t.includes('LIVE'))
 check('tracking data shown (offset 12 us, stratum 3)', t.includes('12') && t.includes('Stratum 3'), t.slice(0, 300))
+// the Upstream sources card starts folded, with a summary; unfold it to look at the servers
+const srcOpen = () => ev(`[...document.querySelectorAll('.card')].some(c => c.textContent.includes('Upstream sources') && c.querySelector('table'))`)
+check('upstream sources: folded by default', !(await srcOpen()) && !t.includes('time.cloudflare.com'), t.slice(t.indexOf('UPSTREAM'), t.indexOf('UPSTREAM') + 120))
+check('upstream sources: the folded header already says how many servers and which one is used', /Upstream sources\s*·\s*3 servers, synced to ntp1\.example\.org/i.test(t))
+await click('.lbl.fold'); await sleep(300); t = await text()
 check('sources shown by host name (reverse DNS), address beside it', t.includes('ntp1.example.org') && t.includes('time.cloudflare.com') && t.includes('91.206.8.70') && t.includes('162.159.200.1'), t.slice(0, 600))
 check('a source without a PTR record falls back to its address', t.includes('203.0.113.9'))
 check('the reference line uses the host name', t.includes('Stratum 3 · ntp1.example.org'), t.slice(0, 300))
@@ -82,8 +87,9 @@ await ev(`(()=>{const r=document.querySelectorAll('tbody tr');
 await sleep(200)
 await ev(`(()=>{const r=document.querySelectorAll('tbody tr');
  const set=(el,v)=>{el.value=v;el.dispatchEvent(new Event(el.tagName==='SELECT'?'change':'input'))};
- const i0=r[0].querySelectorAll('input,select'); set(i0[3],'10.10.10.2/24'); set(i0[4],'Europe/Berlin'); if(!i0[6].checked) i0[6].click();
- const i1=r[1].querySelectorAll('input,select'); set(i1[0],20); set(i1[1],'show'); set(i1[4],'America/New_York'); i1[7].click(); return 1})()`)
+ const c=(row,n,sel='input,select')=>row.querySelector(sel.split(',').map(x=>'td:nth-child('+n+') '+x).join(','));
+ set(c(r[0],4),'10.10.10.2/24'); set(c(r[0],5),'Europe/Berlin'); if(!c(r[0],7,'input').checked) c(r[0],7,'input').click();
+ set(c(r[1],1),20); set(c(r[1],2),'show'); set(c(r[1],5),'America/New_York'); c(r[1],8,'input').click(); return 1})()`)
 await sleep(300)
 await shot('4-vlans')
 await click('.actions .btn'); await sleep(900)
@@ -125,6 +131,12 @@ await tab('MONITOR'); await sleep(2500)
 t = await text()
 check('VLAN clocks table shows VLANs with city time zones and current offsets', t.includes('Dante Prim (A–B)') && t.includes('show') && /Berlin \(UTC\+0[12]:00\)/.test(t) && /New York \(UTC−0[45]:00\)/.test(t), t.slice(300, 700))
 check('VLAN IPs shown from the live interfaces (static + DHCP lease)', t.includes('10.10.10.2/24') && t.includes('10.20.0.77/24'), t.slice(300, 700))
+// layout of the top row: Sync state | Current time | Accuracy, each a third of the width
+const top = await ev(`(() => { const cs = [...document.querySelectorAll('.grid > .card')].slice(0, 3); const w = document.querySelector('.grid').clientWidth;
+  return {titles: cs.map(c => c.querySelector('.lbl').textContent.trim()), x: cs.map(c => Math.round(c.getBoundingClientRect().left)), w: cs.map(c => Math.round(c.getBoundingClientRect().width)), total: w, y: cs.map(c => Math.round(c.getBoundingClientRect().top))} })()`)
+check('top row order: Sync state (left), Current time (centre), Accuracy (right)', JSON.stringify(top.titles) === JSON.stringify(['Sync state', 'Current time', 'Accuracy']) && top.x[0] < top.x[1] && top.x[1] < top.x[2] && new Set(top.y).size === 1, JSON.stringify(top))
+check('... each box is a third of the width', top.w.every(x => Math.abs(x - (top.total - 32 - 24) / 3) < 6) && Math.max(...top.w) - Math.min(...top.w) <= 2, JSON.stringify(top))
+check('System offset and Root distance are one box: offset, RMS, skew, root delay and dispersion together', await ev(`(() => { const c = [...document.querySelectorAll('.grid > .card')][2].textContent; return ['system offset', 'RMS offset', 'Skew', 'Root delay', 'Root dispersion'].every(k => c.includes(k)) })()`) && !(await text()).includes('ROOT DISTANCE'))
 check('current time card agrees with the sync state card (synchronised, not "not synchronised")', /Clock\s+synchronised/.test(t) && !/not synchronised/.test(t), t.slice(0, 300))
 check('current time card shows a UTC clock', /Current time[\s\S]*\d\d:\d\d:\d\d[\s\S]*UTC/i.test(t) && /\d{4}-\d\d-\d\d/.test(t), t.slice(0, 200))
 let tcSeen = false
@@ -154,9 +166,19 @@ await send('Page.reload'); await sleep(2500)
 t = await text(); check('reload: still logged in', t.includes('MONITOR'))
 check('reload: saved VLANs persisted', t.includes('show') && t.includes('Dante Prim'))
 
+// VLANS tab: DHCP rows show the address the system really received
+await tab('VLANS'); await sleep(500)
+t = await text()
+check('VLANS tab: the DHCP VLAN shows its received address (10.20.0.77/24)', t.includes('10.20.0.77/24'), t.slice(0, 300))
+check('VLANS tab: the static VLAN still has its input field', await ev(`[...document.querySelectorAll('tbody tr')][0].querySelector('input[placeholder="10.20.0.2/24"]') !== null`))
+check('VLANS tab: the received address is not an editable field', await ev(`![...document.querySelectorAll('tbody tr')][1].querySelector('input[placeholder="10.20.0.2/24"]')`))
+await ev(`[...document.querySelectorAll('.btn.ghost')].find(b=>b.textContent.includes('ADD VLAN')).click()`); await sleep(300)
+check('VLANS tab: a new, unsaved DHCP row says it is not applied yet', (await text()).includes('not applied yet'))
+await tab('MONITOR'); await sleep(400)
+
 // the upstream sources card folds, says what it hides, and remembers that across a reload
 const srcShown = () => ev(`[...document.querySelectorAll('.card')].some(c => c.textContent.includes('Upstream sources') && c.querySelector('table'))`)
-check('upstream sources: expanded by default', await srcShown())
+check('upstream sources: still unfolded, as left earlier in this browser', await srcShown())
 await click('.lbl.fold'); await sleep(300)
 t = await text()
 check('upstream sources: click folds the table away', !(await srcShown()) && !t.includes('time.cloudflare.com'))

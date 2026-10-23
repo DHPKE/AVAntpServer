@@ -124,8 +124,9 @@ createApp({setup() {
     if (nic && nic.addrs.length) return {live: true, text: nic.addrs.join(', ')}
     return {live: false, text: v.mode === 'static' ? v.address + ' (not active)' : 'DHCP: no lease'}
   }
-  const collapsed = reactive({sources: false})
-  try { collapsed.sources = localStorage.getItem('avantp-collapse-sources') === '1' } catch (_) {}
+  // folded unless this browser was told to keep it open; without browser storage it simply starts folded
+  const collapsed = reactive({sources: true})
+  try { collapsed.sources = localStorage.getItem('avantp-collapse-sources') !== '0' } catch (_) {}
   function toggleCard(name) {
     collapsed[name] = !collapsed[name]
     try { localStorage.setItem('avantp-collapse-' + name, collapsed[name] ? '1' : '0') } catch (_) {}
@@ -153,6 +154,11 @@ createApp({setup() {
   }
   function startLive() { if (!liveTimer) liveTimer = setInterval(() => { liveMs.value = Date.now() + skew.value }, 100) }
   function stopLive() { clearInterval(liveTimer); liveTimer = null }
+  const lastUpdate = computed(() => {
+    if (!tr.value || !tr.value.ref_time) return '—'
+    const t = Math.max(0, Math.round(utcMs.value / 1000 - tr.value.ref_time))
+    return t < 90 ? t + ' s ago' : Math.round(t / 60) + ' min ago'
+  })
   const utcDate = computed(() => new Date(utcMs.value).toISOString().slice(0, 10))
   const NOT = {state: 'off'}
   const tcStat = v => {
@@ -160,6 +166,15 @@ createApp({setup() {
     return e || {artnet: NOT, mtc_rtp: NOT}
   }
   // what the sender really reports; with the toggle on but no report, the service is not running
+  // DHCP VLANs: the address the system really got (or why there is none yet), for the VLANS tab
+  function dhcpState(v) {
+    const lan = (shown.value.lan || {}).iface
+    const nic = ifaces.value.find(i => i.name === lan + '.' + v.id)
+    if (!nic) return {text: 'not applied yet', cls: 'warnc', hint: 'This VLAN does not exist on the system yet: save and apply.'}
+    if (nic.addrs.length) return {text: nic.addrs.join(', '), cls: 'good', hint: 'Address received from the DHCP server on this VLAN.'}
+    return {text: nic.state === 'up' ? 'waiting for a DHCP lease…' : 'link down', cls: 'warnc',
+            hint: 'The VLAN is up but no DHCP server has answered yet (is there one on this VLAN?).'}
+  }
   function tcText(v) {
     const t = v.timecode || {}, r = tcStat(v)
     const a = r.artnet || NOT
@@ -269,7 +284,7 @@ createApp({setup() {
 
   onMounted(start)
   onUnmounted(stop)
-  return {collapsed, toggleCard, liveTc, synced, um, umLeftText, setUpdateMode, version, tabs, tab, user, needsSetup, lu, lp, loginErr, busy, connected, doLogin, doLogout, draft, up, msg, msgCls, pw,
+  return {lastUpdate, dhcpState, collapsed, toggleCard, liveTc, synced, um, umLeftText, setUpdateMode, version, tabs, tab, user, needsSetup, lu, lp, loginErr, busy, connected, doLogin, doLogout, draft, up, msg, msgCls, pw,
     ap, left, recent, applyNow, confirm, cfg, shown, tr, chronyRunning, sources, ifaces, ifaceNames, syncCls, syncTxt, syncIcon, syncName, fmtS, off, offCls, utcNow,
     tzLabel, tzGroups, localTime, tcText, tcCls, tcStat, tc, utcDate, vlanAddr, cfgVlans, hasPending, draftDirty, wanDns, addVlan, save, changePw}
 }}).mount('#app')
