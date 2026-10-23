@@ -1,0 +1,44 @@
+{
+  "skill_name": "project-cards",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Set up a card system for my project 'stage-lighting-app' so I can see what is open and what I'm waiting on.",
+      "expected_output": "Asks or states where the board lives (suggests outside the git repo), runs init_cards.py with --project stage-lighting-app, reports the created folders (now/waiting/later/done, README, _templates, _tools), and shows the three commands list/new/move. Does not invent cards it cannot support.",
+      "assertions": [
+        {"name": "runs-init", "description": "Uses scripts/init_cards.py to create the board", "type": "behavior"},
+        {"name": "location-outside-repo", "description": "Suggests keeping the board outside the git repo or gitignored", "type": "behavior"},
+        {"name": "no-invented-state", "description": "Does not create cards with fabricated status or facts", "type": "behavior"}
+      ],
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "The release is blocked until the client confirms the tag. Put that on the board.",
+      "expected_output": "Creates or moves the relevant card to waiting with --waiting-on naming the client's confirmation, and states what unblocks it; logs the change.",
+      "assertions": [
+        {"name": "waiting-with-reason", "description": "Card is in waiting/ and waiting_on names who/what", "type": "behavior"},
+        {"name": "uses-cli", "description": "Uses cards.py new/move rather than hand-editing frontmatter", "type": "behavior"}
+      ],
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Mark the 'port lock' card as done, I think it works.",
+      "expected_output": "Does not move to done on 'I think'; asks what was verified (tests run, hardware tried), records the gap in State, and moves to done only when verification is stated or keeps it in now/waiting with the gap named.",
+      "assertions": [
+        {"name": "verifies-before-done", "description": "Asks what was actually verified before moving to done", "type": "behavior"}
+      ],
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "I want to write down my thoughts on a book I'm reading about acoustics and connect them.",
+      "expected_output": "Recognises this as note-taking, not task tracking, and points to the smart-notes skill instead of creating cards.",
+      "assertions": [
+        {"name": "redirects-notes", "description": "Points to smart-notes instead of making task cards", "type": "behavior"}
+      ],
+      "files": []
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "skill_name": "smart-notes",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I want to set up a Zettelkasten like Sönke Ahrens describes, for my reading about acoustics and show design. Put it in ~/zk-test.",
+      "expected_output": "Runs init_slipbox.py for ~/zk-test, reports the created folders (inbox, literature, permanent, projects, index.md, _templates, _tools), explains the workflow in a few lines, and offers to capture a first fleeting note. Does not create topic folders.",
+      "assertions": [
+        {"name": "runs-init-script", "description": "Uses scripts/init_slipbox.py (or equivalent) so the folders, templates and _tools exist", "type": "behavior"},
+        {"name": "no-topic-folders", "description": "Does not create folders per topic such as acoustics/ under permanent/", "type": "behavior"},
+        {"name": "short-workflow", "description": "Summarises capture -> literature -> permanent -> index in a few lines instead of pasting the whole README", "type": "behavior"}
+      ],
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Here is my fleeting note: 'reverb time depends on room volume and absorption - Sabine'. Turn it into a permanent note for me.",
+      "expected_output": "Does not just write a note: first asks the user to restate the single idea and how it relates to existing notes (support/contradict/extend/example), searches permanent/ for related notes, then creates the note with --link ID:why (or exempts it only if the box is empty), and marks the fleeting note processed.",
+      "assertions": [
+        {"name": "asks-connecting-questions", "description": "Asks how the idea relates to existing notes before filing it", "type": "behavior"},
+        {"name": "links-required", "description": "Uses at least one --link when other permanent notes exist", "type": "behavior"},
+        {"name": "marks-processed", "description": "Moves the handled fleeting note to inbox/.processed via the processed command", "type": "behavior"}
+      ],
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Check how healthy my slip-box in ~/zettelkasten is.",
+      "expected_output": "Runs lint.py with --root ~/zettelkasten, reports errors first and warnings second in plain words, includes the stats line, and recommends one or two highest-value fixes instead of dumping every finding.",
+      "assertions": [
+        {"name": "runs-lint", "description": "Runs lint.py against the slip-box", "type": "behavior"},
+        {"name": "prioritised", "description": "Puts errors before warnings and suggests only a few fixes", "type": "behavior"}
+      ],
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "Can you use my slip-box to track my to-do list and release tasks for the app?",
+      "expected_output": "Explains that a slip-box is for ideas, not tasks, and points to the project-cards skill for task tracking instead of putting tasks into permanent notes.",
+      "assertions": [
+        {"name": "redirects-tasks", "description": "Does not store tasks as permanent notes; points to the project-cards skill", "type": "behavior"}
+      ],
+      "files": []
+    }
+  ]
+}
