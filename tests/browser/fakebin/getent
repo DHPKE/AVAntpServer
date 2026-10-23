@@ -1,0 +1,8 @@
+#!/bin/sh
+# reverse DNS for the test: two addresses have a name, 203.0.113.9 has none
+[ "$1" = hosts ] || exit 2
+case "$2" in
+ 91.206.8.70) echo "91.206.8.70     ntp1.example.org";;
+ 162.159.200.1) echo "162.159.200.1  time.cloudflare.com cf-alias";;
+ *) exit 2;;
+esac

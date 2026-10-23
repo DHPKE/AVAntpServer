@@ -1,8 +1,10 @@
 """Read-only system status: chrony state and network interfaces. All subprocess calls are fixed argv, no shell."""
+import ipaddress
 import json
 import subprocess
 import time
 
+from . import names
 
 def _run(argv, timeout=3):
     try:
@@ -34,10 +36,28 @@ def parse_sources(csv):
     return out
 
 
+def _is_ip(x):
+    try:
+        ipaddress.ip_address(x)
+        return True
+    except ValueError:
+        return False
+
+
+def add_hosts(tracking, sources, resolver=None):
+    """Adds `host` (reverse DNS name, or None while unknown) next to each address chrony reported."""
+    resolver = resolver or names.resolver
+    if tracking:
+        tracking["ref_host"] = resolver.get(tracking["ref_name"]) if _is_ip(tracking["ref_name"]) else tracking["ref_name"]
+    for src in sources:
+        src["host"] = resolver.get(src["name"]) if _is_ip(src["name"]) else src["name"]
+
+
 def chrony():
     t = parse_tracking(_run(["chronyc", "-h", "127.0.0.1", "-c", "tracking"]))
-    return {"running": t is not None, "tracking": t,
-            "sources": parse_sources(_run(["chronyc", "-h", "127.0.0.1", "-c", "sources"])) if t else []}
+    sources = parse_sources(_run(["chronyc", "-h", "127.0.0.1", "-c", "sources"])) if t else []
+    add_hosts(t, sources)
+    return {"running": t is not None, "tracking": t, "sources": sources}
 
 
 def interfaces():

@@ -108,7 +108,7 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
       <div class="lbl">Sync state</div>
       <div class="ring" :class="syncCls">{{ syncIcon }}</div>
       <div class="sname" :class="syncTxt">{{ syncName }}</div>
-      <div class="smeta">Stratum {{ tr ? tr.stratum : '—' }} · {{ tr ? tr.ref_name || tr.ref_id : '—' }}</div>
+      <div class="smeta">Stratum {{ tr ? tr.stratum : '—' }} · {{ tr ? tr.ref_host || tr.ref_name || tr.ref_id : '—' }}</div>
       <div class="div"></div>
       <div class="cr"><span class="ck">Leap status</span><span class="cv">{{ tr ? tr.leap : '—' }}</span></div>
       <div class="cr"><span class="ck">Update interval</span><span class="cv">{{ tr ? tr.update_interval_s.toFixed(0)+' s' : '—' }}</span></div>
@@ -141,9 +141,9 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
     </div>
     <div class="card full">
       <div class="lbl">Upstream sources</div>
-      <table v-if="sources.length"><thead><tr><th></th><th>Source</th><th>Stratum</th><th>Poll</th><th>Reach</th><th>Last rx</th><th>Offset</th></tr></thead>
+      <table v-if="sources.length"><thead><tr><th></th><th>Server</th><th>Address</th><th>Stratum</th><th>Poll</th><th>Reach</th><th>Last rx</th><th>Offset</th></tr></thead>
         <tbody><tr v-for="s in sources" :key="s.name"><td :class="s.state==='*'?'good':''">{{ s.state==='*'?'● used':s.state==='+'?'+ ok':s.state }}</td>
-          <td>{{ s.name }}</td><td>{{ s.stratum }}</td><td>{{ s.poll }}</td><td>{{ s.reach.toString(8) }}</td><td>{{ s.last_rx_s }} s</td><td>{{ fmtS(s.offset_s) }}</td></tr></tbody></table>
+          <td>{{ s.host || s.name }}</td><td style="color:var(--muted)">{{ s.host && s.host !== s.name ? s.name : '' }}</td><td>{{ s.stratum }}</td><td>{{ s.poll }}</td><td>{{ s.reach.toString(8) }}</td><td>{{ s.last_rx_s }} s</td><td>{{ fmtS(s.offset_s) }}</td></tr></tbody></table>
       <div v-else class="smeta" style="text-align:left">{{ chronyRunning ? 'No sources yet.' : 'chrony is not running.' }}</div>
     </div>
     <div class="card full">

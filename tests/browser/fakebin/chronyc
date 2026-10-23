@@ -1,5 +1,6 @@
 #!/bin/sh
+# like the real `chronyc -c`: sources and the reference are reported as IP ADDRESSES
 case "$*" in
- *tracking*) echo "C0A80101,pool.ntp.org,3,$(date +%s).0,0.000012,-0.00001,0.00002,1.23,0.1,0.05,0.0123,0.002,64.0,Normal";;
- *sources*) echo "^,*,pool.ntp.org,2,6,377,12,0.000123,0.0001,0.0002"; echo "^,+,time.cloudflare.com,3,6,377,30,-0.000345,0.0001,0.0002";;
+ *tracking*) echo "5B3B7164,91.206.8.70,3,$(date +%s).0,0.000012,-0.00001,0.00002,1.23,0.1,0.05,0.0123,0.002,64.0,Normal";;
+ *sources*) echo "^,*,91.206.8.70,2,6,377,12,0.000123,0.0001,0.0002"; echo "^,+,162.159.200.1,3,6,377,30,-0.000345,0.0001,0.0002"; echo "^,-,203.0.113.9,2,6,377,40,0.002000,0.0001,0.0002";;
 esac
