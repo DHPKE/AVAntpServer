@@ -1,0 +1,9 @@
+[Unit]
+Description=Open or close AVAntpServer Update mode when the WebUI asks for it
+
+[Path]
+PathExists=/var/lib/avantp/update.request
+Unit=avantp-update.service
+
+[Install]
+WantedBy=multi-user.target

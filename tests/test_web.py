@@ -3,6 +3,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 import unittest
 
 from avantp import web
@@ -121,6 +122,51 @@ class WebTest(unittest.TestCase):
         self.assertEqual(self.req("POST", "/api/confirm", {}, cookie=ck, csrf=csrf)[0], 200)
         self.assertTrue(os.path.exists(os.path.join(self.dir, "confirm")))
         os.unlink(os.path.join(self.dir, "confirm"))
+        os.unlink(os.path.join(self.dir, "status.json"))
+
+    def test_force_reapply_of_the_active_config(self):
+        _, ck, csrf = self.login()
+        for f in ("pending.json", "config.json", "status.json", "apply.request"):
+            try:
+                os.unlink(os.path.join(self.dir, f))
+            except FileNotFoundError:
+                pass
+        self.assertEqual(self.req("POST", "/api/apply", {"force": True}, cookie=ck, csrf=csrf)[0], 409)   # nothing active yet
+        self.req("PUT", "/api/config", BASE, cookie=ck, csrf=csrf)
+        shutil_copy = open(os.path.join(self.dir, "pending.json")).read()
+        open(os.path.join(self.dir, "config.json"), "w").write(shutil_copy)                               # as if applied
+        self.assertEqual(self.req("POST", "/api/apply", {}, cookie=ck, csrf=csrf)[0], 409)               # plain apply: nothing new
+        self.assertEqual(self.req("POST", "/api/apply", {"force": "yes"}, cookie=ck, csrf=csrf)[0], 409)  # only a real true counts
+        st, d, _ = self.req("POST", "/api/apply", {"force": True}, cookie=ck, csrf=csrf)
+        self.assertEqual((st, d["state"]), (202, "queued"))
+        self.assertTrue(os.path.exists(os.path.join(self.dir, "apply.request")))
+        for f in ("pending.json", "config.json", "apply.request"):
+            os.unlink(os.path.join(self.dir, f))
+
+    def test_update_mode_endpoint(self):
+        _, ck, csrf = self.login()
+        self.assertEqual(self.req("POST", "/api/update-mode", {"on": True})[0], 401)
+        self.assertEqual(self.req("POST", "/api/update-mode", {"on": True}, cookie=ck)[0], 403)          # CSRF
+        for bad in ({}, {"on": "yes"}, {"on": 1}, {"on": None}, {"duration": 99999}):
+            self.assertEqual(self.req("POST", "/api/update-mode", bad, cookie=ck, csrf=csrf)[0], 400, bad)
+        st, d, _ = self.req("POST", "/api/update-mode", {"on": True}, cookie=ck, csrf=csrf)
+        self.assertEqual((st, d["state"]), (202, "queued"))
+        req = os.path.join(self.dir, "update.request")
+        self.assertEqual(open(req).read(), "on")                      # the helper reads nothing but this word
+        self.req("POST", "/api/update-mode", {"on": False}, cookie=ck, csrf=csrf)
+        self.assertEqual(open(req).read(), "off")
+        os.unlink(req)
+        self.assertEqual(self.req("GET", "/api/update-mode", cookie=ck)[1]["state"], "off")
+        self.assertEqual(self.req("GET", "/api/update-mode")[0], 401)
+        # the status expires on its own when the kernel timeout has passed
+        json.dump({"state": "on", "until": time.time() + 600}, open(os.path.join(self.dir, "update.json"), "w"))
+        self.assertEqual(self.req("GET", "/api/update-mode", cookie=ck)[1]["state"], "on")
+        json.dump({"state": "on", "until": time.time() - 5}, open(os.path.join(self.dir, "update.json"), "w"))
+        self.assertEqual(self.req("GET", "/api/update-mode", cookie=ck)[1]["state"], "off")
+        os.unlink(os.path.join(self.dir, "update.json"))
+        # not while an apply is waiting for confirmation
+        json.dump({"state": "pending-confirm"}, open(os.path.join(self.dir, "status.json"), "w"))
+        self.assertEqual(self.req("POST", "/api/update-mode", {"on": True}, cookie=ck, csrf=csrf)[0], 409)
         os.unlink(os.path.join(self.dir, "status.json"))
 
     def test_version_is_reported_after_login(self):

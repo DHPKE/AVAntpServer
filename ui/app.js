@@ -6,7 +6,7 @@ createApp({setup() {
   const user = ref(null), csrf = ref(''), needsSetup = ref(false), version = ref('')
   const lu = ref(''), lp = ref(''), loginErr = ref(''), busy = ref(false)
   const connected = ref(false), status = ref(null), skew = ref(0), now = ref(Date.now())
-  const cfg = ref({active: null, pending: null}), ap = ref({state: 'idle'})
+  const cfg = ref({active: null, pending: null}), ap = ref({state: 'idle'}), um = ref({state: 'off'})
   const draft = ref(null), up = reactive({default: '', backup: '', custom: ''}), baseline = ref('')
   const msg = ref(''), msgCls = ref('ok'), pw = reactive({old: '', new: ''})
   let timers = []
@@ -52,6 +52,7 @@ createApp({setup() {
       const s = await api('GET', '/api/status')
       status.value = s; skew.value = s.utc * 1000 - Date.now(); connected.value = true
       ap.value = await api('GET', '/api/apply')
+      um.value = await api('GET', '/api/update-mode')
     } catch (_) { connected.value = false }
   }
   const tr = computed(() => status.value && status.value.chrony.tracking)
@@ -138,9 +139,18 @@ createApp({setup() {
   const hasPending = computed(() => !!cfg.value.pending && canon(cfg.value.pending) !== canon(cfg.value.active))
   const left = computed(() => Math.max(0, Math.ceil((ap.value.deadline || 0) - utcMs.value / 1000)))
   const recent = (a, secs = 600) => a.time && utcMs.value / 1000 - a.time < secs
-  async function applyNow() {
+  const umLeftText = computed(() => {
+    const t = Math.max(0, Math.ceil((um.value.until || 0) - utcMs.value / 1000))
+    return Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0') + ' min'
+  })
+  async function setUpdateMode(on) {
     busy.value = true
-    try { await api('POST', '/api/apply', {}); ap.value = {state: 'applying'} } catch (e) { msg.value = e.message; msgCls.value = 'err' } finally { busy.value = false }
+    try { await api('POST', '/api/update-mode', {on}); um.value = on ? {state: 'on', until: utcMs.value / 1000 + 900} : {state: 'off'} }
+    catch (e) { msg.value = e.message; msgCls.value = 'err' } finally { busy.value = false }
+  }
+  async function applyNow(force) {
+    busy.value = true
+    try { await api('POST', '/api/apply', force === true ? {force: true} : {}); ap.value = {state: 'applying'} } catch (e) { msg.value = e.message; msgCls.value = 'err' } finally { busy.value = false }
   }
   async function confirm() {
     busy.value = true
@@ -208,7 +218,7 @@ createApp({setup() {
 
   onMounted(start)
   onUnmounted(stop)
-  return {version, tabs, tab, user, needsSetup, lu, lp, loginErr, busy, connected, doLogin, doLogout, draft, up, msg, msgCls, pw,
+  return {um, umLeftText, setUpdateMode, version, tabs, tab, user, needsSetup, lu, lp, loginErr, busy, connected, doLogin, doLogout, draft, up, msg, msgCls, pw,
     ap, left, recent, applyNow, confirm, cfg, shown, tr, chronyRunning, sources, ifaces, ifaceNames, syncCls, syncTxt, syncIcon, syncName, fmtS, off, offCls, utcNow,
     tzLabel, tzGroups, localTime, tcText, vlanAddr, cfgVlans, hasPending, draftDirty, wanDns, addVlan, save, changePw}
 }}).mount('#app')

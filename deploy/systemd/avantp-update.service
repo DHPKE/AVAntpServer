@@ -1,0 +1,9 @@
+[Unit]
+Description=AVAntpServer Update mode (time-limited web access to package mirrors)
+
+[Service]
+Type=oneshot
+Environment=PYTHONPATH=/opt/avantp
+ExecStart=/usr/bin/python3 -m avantp update-mode
+RuntimeDirectory=avantp
+RuntimeDirectoryPreserve=yes

@@ -97,6 +97,11 @@ def restore(paths, snapdir, meta):
             os.symlink(m["target"], p)
 
 
+def updatemode_reset(paths):
+    from . import updatemode
+    updatemode.close_after_apply(paths)
+
+
 def _ifaces(cfg):
     if not cfg:
         return set()
@@ -136,6 +141,7 @@ def apply_once(paths, ex, confirm_seconds=CONFIRM_SECONDS, poll=0.5, now=time.ti
             ex.rollback(takeover, old_cfg)
         except Exception as e:  # keep going: files are already restored
             reason += f" (rollback commands reported: {e})"
+        updatemode_reset(paths)            # the firewall was reloaded, so an open update window is gone too
         set_status(paths, state="rolled-back", reason=reason)
         return "rolled-back"
 
@@ -154,6 +160,7 @@ def apply_once(paths, ex, confirm_seconds=CONFIRM_SECONDS, poll=0.5, now=time.ti
         ex.activate(cfg, removed, takeover)
     except Exception as e:
         return roll_back(f"activation failed: {e}")
+    updatemode_reset(paths)
 
     try:
         os.unlink(confirm)
@@ -203,6 +210,9 @@ class FakeExecutor:
 
     def rollback(self, takeover, old_cfg):
         self.calls.append(("rollback", takeover))
+
+    def update_window(self, wan, on, seconds):
+        self.calls.append(("update_window", wan, on, seconds))
 
 
 class SystemExecutor:
@@ -271,6 +281,13 @@ class SystemExecutor:
             self.sh("networkctl", "reconfigure", n, check=False)
         self.sh("systemctl", "enable", "chrony")
         self.sh("systemctl", "restart", "chrony")
+
+    def update_window(self, wan, on, seconds):
+        """Open (with a kernel timeout) or close the WAN's web access in the firewall's update_window set."""
+        if on:
+            self.sh("nft", "add", "element", "inet", "avantp", "update_window", f'{{ "{wan}" timeout {seconds}s }}')
+        else:
+            self.sh("nft", "delete", "element", "inet", "avantp", "update_window", f'{{ "{wan}" }}', check=False)
 
     def rollback(self, takeover, old_cfg):
         """Files are already restored; make the running system match them again."""

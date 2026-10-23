@@ -28,6 +28,27 @@ def paths():
     return "/var/lib/avantp", "/etc/avantp", "/run/avantp"
 
 
+def run_update_mode(args):
+    """One-shot (started by avantp-update.path): handle update.request. With --fake --watch: development loop."""
+    import time
+    from . import apply, updatemode
+    data, _, run = paths()
+    if "--fake" in args:
+        p = apply.Paths(root=os.path.join(os.environ["AVANTP_DIR"], "sysroot"))
+        p.data, p.run = data, run
+        os.makedirs(run, exist_ok=True)
+        ex = apply.FakeExecutor()
+    else:
+        p = apply.Paths()
+        ex = apply.SystemExecutor(p)
+    while True:
+        if os.path.lexists(os.path.join(p.data, "update.request")):
+            print("update mode:", updatemode.handle(p, ex), flush=True)
+        if "--watch" not in args:
+            return 0
+        time.sleep(0.5)
+
+
 def run_apply(args):
     import time
     from . import apply
@@ -69,6 +90,8 @@ def main(argv):
         return web(paths()[0], argv[2], int(argv[3]))
     if len(argv) >= 2 and argv[1] == "apply":
         return run_apply(argv[2:])
+    if len(argv) >= 2 and argv[1] == "update-mode":
+        return run_update_mode(argv[2:])
     if len(argv) != 4 or argv[1] != "render":
         print("usage: python -m avantp render <config.json> <outdir> | web <host> <port> | passwd <user> | apply [--fake] [--watch]", file=sys.stderr)
         return 2

@@ -115,6 +115,11 @@ def nftables(cfg):
 delete table inet avantp
 
 table inet avantp {{
+  # "Update mode": the root helper adds the WAN interface here with a timeout; the kernel removes it again by itself
+  set update_window {{
+    type ifname
+    flags timeout
+  }}
   chain input {{
     type filter hook input priority 0; policy drop;
     iifname "lo" accept
@@ -135,6 +140,7 @@ table inet avantp {{
     oifname "{wan}" udp dport 123 accept
     oifname "{wan}" tcp dport 4460 accept
     oifname "{wan}" meta l4proto {{ udp, tcp }} th dport 53 accept
+    oifname @update_window tcp dport {{ 80, 443 }} accept   # package updates, only while Update mode is on
 {wan_dhcp_out}{nl.join(outp)}
   }}
 }}

@@ -136,6 +136,85 @@ class ApplyTest(unittest.TestCase):
         self.assertEqual(os.readlink(self.f("etc/resolv.conf")), "../run/systemd/resolve/stub-resolv.conf")
 
 
+class UpdateModeTest(unittest.TestCase):
+    def setUp(self):
+        from avantp import updatemode
+        self.um = updatemode
+        self.root = tempfile.mkdtemp()
+        self.p = apply.Paths(self.root)
+        os.makedirs(self.p.data)
+        os.makedirs(self.p.run)
+        self.ex = apply.FakeExecutor()
+
+    def active(self):
+        os.makedirs(self.p.etc, exist_ok=True)
+        json.dump(config.dump(config.validate(copy.deepcopy(BASE))), open(os.path.join(self.p.etc, "config.json"), "w"))
+
+    def request(self, text):
+        open(os.path.join(self.p.data, "update.request"), "w").write(text)
+
+    def status(self):
+        return json.load(open(os.path.join(self.p.run, "update.json")))
+
+    def test_on_and_off(self):
+        self.active()
+        self.request("on")
+        self.assertEqual(self.um.handle(self.p, self.ex, now=lambda: 1000.0), "on")
+        self.assertEqual(self.status()["until"], 1000.0 + 900)
+        self.assertIn(("update_window", "enp4s0", True, 900), self.ex.calls)      # WAN interface from the ACTIVE config
+        self.request("off")
+        self.assertEqual(self.um.handle(self.p, self.ex), "off")
+        self.assertEqual(self.status()["state"], "off")
+        self.assertIn(("update_window", "enp4s0", False, 900), self.ex.calls)
+        self.assertFalse(os.path.exists(os.path.join(self.p.data, "update.request")))
+
+    def test_only_the_two_words_are_accepted(self):
+        self.active()
+        for bad in ("", "ON", "on; nft flush ruleset", "enp9s0", "on\noff", "1"):
+            self.request(bad)
+            self.assertEqual(self.um.handle(self.p, self.ex), "error", bad)
+        self.assertEqual(self.ex.calls, [])
+
+    def test_refused_without_an_active_config(self):
+        self.request("on")
+        self.assertEqual(self.um.handle(self.p, self.ex), "error")
+        self.assertIn("apply one first", self.status()["error"])
+        self.assertEqual(self.ex.calls, [])
+
+    def test_symlinked_request_is_refused(self):
+        self.active()
+        secret = os.path.join(self.root, "x")
+        open(secret, "w").write("on")
+        os.symlink(secret, os.path.join(self.p.data, "update.request"))
+        self.assertEqual(self.um.handle(self.p, self.ex), "error")
+        self.assertEqual(self.ex.calls, [])
+
+    def test_executor_failure_is_reported(self):
+        self.active()
+        self.ex.update_window = lambda *a: (_ for _ in ()).throw(RuntimeError("nft: no such set"))
+        self.request("on")
+        self.assertEqual(self.um.handle(self.p, self.ex), "error")
+        self.assertIn("no such set", self.status()["error"])
+
+    def test_an_apply_closes_an_open_window_in_the_status(self):
+        self.active()
+        self.request("on")
+        self.um.handle(self.p, self.ex)
+        self.assertEqual(self.status()["state"], "on")
+        self.um.close_after_apply(self.p)
+        self.assertEqual(self.status()["state"], "off")
+
+    def test_system_executor_commands(self):
+        ex = apply.SystemExecutor(self.p)
+        ran = []
+        ex.sh = lambda *argv, check=True, timeout=60: ran.append((argv, check))
+        ex.update_window("enp4s0", True, 900)
+        ex.update_window("enp4s0", False, 900)
+        self.assertEqual(ran[0][0], ("nft", "add", "element", "inet", "avantp", "update_window", '{ "enp4s0" timeout 900s }'))
+        self.assertEqual(ran[1][0][:5], ("nft", "delete", "element", "inet", "avantp"))
+        self.assertFalse(ran[1][1])                  # closing an already-closed window is not an error
+
+
 class PreflightTest(unittest.TestCase):
     def test_chrony_candidate_is_readable_by_the_unprivileged_chronyd_and_cleaned_up(self):
         import stat

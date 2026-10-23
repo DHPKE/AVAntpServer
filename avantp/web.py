@@ -11,6 +11,7 @@ import os
 import ssl
 import sys
 import threading
+import time
 from http import cookies
 
 from . import auth, config, status
@@ -50,6 +51,12 @@ class App:
 
     def active(self):
         return self._read("config.json", self.etc)
+
+    def update_status(self):
+        st = self._read("update.json", self.run) or {"state": "off"}
+        if st.get("state") == "on" and st.get("until", 0) < time.time():   # the kernel closed it
+            st = {"state": "off", "time": st.get("until")}
+        return st
 
     def apply_status(self):
         return self._read("status.json", self.run) or {"state": "idle"}
@@ -130,6 +137,8 @@ def make_handler(app):
                 return self.send(200, {"active": app.active(), "pending": app.pending()})
             if path == "/api/apply":
                 return self.send(200, app.apply_status())
+            if path == "/api/update-mode":
+                return self.send(200, app.update_status())
             self.err(404, "not found")
 
         def do_POST(self):
@@ -184,10 +193,23 @@ def make_handler(app):
                 pend, st = app.pending(), app.apply_status().get("state")
                 if st in ("applying", "pending-confirm"):
                     return self.err(409, "an apply is already running")
-                if not pend or pend == app.active():
+                force = data.get("force") is True           # re-apply the active config, e.g. after a software update
+                if force and app.active() and (not pend or pend == app.active()):
+                    pend = app.active()
+                    app.save_pending(pend)
+                elif not pend or pend == app.active():
                     return self.err(409, "nothing to apply: there are no saved changes")
                 with app.lock:
                     open(os.path.join(app.dir, "apply.request"), "w").close()
+                return self.send(202, {"state": "queued"})
+            if post and path == "/api/update-mode":
+                if not isinstance(data.get("on"), bool):
+                    return self.err(400, "expected {\"on\": true|false}")
+                if app.apply_status().get("state") in ("applying", "pending-confirm"):
+                    return self.err(409, "an apply is running; wait until it is confirmed")
+                with app.lock:
+                    with open(os.path.join(app.dir, "update.request"), "w") as f:
+                        f.write("on" if data["on"] else "off")
                 return self.send(202, {"state": "queued"})
             if post and path == "/api/confirm":
                 if app.apply_status().get("state") != "pending-confirm":
