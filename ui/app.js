@@ -31,8 +31,9 @@ createApp({setup() {
     await poll()
     await loadConfig()
     timers = [setInterval(poll, 2000), setInterval(() => now.value = Date.now(), 1000)]
+    if (tab.value === 'monitor') startLive()
   }
-  function stop() { timers.forEach(clearInterval); timers = [] }
+  function stop() { timers.forEach(clearInterval); timers = []; stopLive() }
   async function doLogin() {
     busy.value = true; loginErr.value = ''
     try {
@@ -123,6 +124,35 @@ createApp({setup() {
     if (nic && nic.addrs.length) return {live: true, text: nic.addrs.join(', ')}
     return {live: false, text: v.mode === 'static' ? v.address + ' (not active)' : 'DHCP: no lease'}
   }
+  const collapsed = reactive({sources: false})
+  try { collapsed.sources = localStorage.getItem('avantp-collapse-sources') === '1' } catch (_) {}
+  function toggleCard(name) {
+    collapsed[name] = !collapsed[name]
+    try { localStorage.setItem('avantp-collapse-' + name, collapsed[name] ? '1' : '0') } catch (_) {}
+  }
+  // ---- live timecode: the time of day in the VLAN's zone as HH:MM:SS:FF, the same arithmetic the sender uses
+  const liveMs = ref(Date.now())
+  let liveTimer = null
+  const zoneFmt = {}
+  const pad = n => String(n).padStart(2, '0')
+  function dropFrame(n) {                       // 29.97 fps: frames 0 and 1 are skipped each minute except every tenth
+    const d = Math.floor(n / 17982), m = n % 17982
+    n += 18 * d + (m >= 2 ? 2 * Math.floor((m - 2) / 1798) : 0)
+    return [Math.floor(n / 108000) % 24, Math.floor(n / 1800) % 60, Math.floor(n / 30) % 60, n % 30]
+  }
+  function liveTc(v) {
+    const fps = (v.timecode || {}).fps || 25, tz = v.timezone || 'UTC', ms = liveMs.value
+    try {
+      const f = zoneFmt[tz] = zoneFmt[tz] || new Intl.DateTimeFormat('en-GB', {timeZone: tz, hourCycle: 'h23', hour: '2-digit', minute: '2-digit', second: '2-digit'})
+      const part = t => +f.formatToParts(ms).find(x => x.type === t).value
+      const h = part('hour'), m = part('minute'), s = part('second'), frac = (ms - Math.floor(ms / 1000) * 1000) / 1000
+      if (fps === 29.97) { const t = dropFrame(Math.floor((h * 3600 + m * 60 + s + frac) * 30000 / 1001)); return `${pad(t[0])}:${pad(t[1])}:${pad(t[2])};${pad(t[3])}` }
+      const rate = Math.floor(fps)
+      return `${pad(h)}:${pad(m)}:${pad(s)}:${pad(Math.min(rate - 1, Math.floor(frac * rate)))}`
+    } catch (_) { return '--:--:--:--' }
+  }
+  function startLive() { if (!liveTimer) liveTimer = setInterval(() => { liveMs.value = Date.now() + skew.value }, 100) }
+  function stopLive() { clearInterval(liveTimer); liveTimer = null }
   const utcDate = computed(() => new Date(utcMs.value).toISOString().slice(0, 10))
   const NOT = {state: 'off'}
   const tcStat = v => {
@@ -234,12 +264,12 @@ createApp({setup() {
       pw.old = pw.new = ''; msg.value = 'Password changed. Other sessions were logged out.'; msgCls.value = 'ok'
     } catch (e) { msg.value = e.message; msgCls.value = 'err' } finally { busy.value = false }
   }
-  watch(tab, () => { msg.value = '' })
+  watch(tab, t => { msg.value = ''; t === 'monitor' ? startLive() : stopLive() })
   watch(() => ap.value.state, (n, o) => { if (o && n !== o && ['applied', 'rolled-back', 'error'].includes(n)) loadConfig().catch(() => {}) })
 
   onMounted(start)
   onUnmounted(stop)
-  return {synced, um, umLeftText, setUpdateMode, version, tabs, tab, user, needsSetup, lu, lp, loginErr, busy, connected, doLogin, doLogout, draft, up, msg, msgCls, pw,
+  return {collapsed, toggleCard, liveTc, synced, um, umLeftText, setUpdateMode, version, tabs, tab, user, needsSetup, lu, lp, loginErr, busy, connected, doLogin, doLogout, draft, up, msg, msgCls, pw,
     ap, left, recent, applyNow, confirm, cfg, shown, tr, chronyRunning, sources, ifaces, ifaceNames, syncCls, syncTxt, syncIcon, syncName, fmtS, off, offCls, utcNow,
     tzLabel, tzGroups, localTime, tcText, tcCls, tcStat, tc, utcDate, vlanAddr, cfgVlans, hasPending, draftDirty, wanDns, addVlan, save, changePw}
 }}).mount('#app')

@@ -31,6 +31,9 @@ header h1{font-size:13px;font-weight:700;letter-spacing:.08em;border-left:3px so
 .ring.bad{border-color:var(--red);color:var(--red)}.ring.warn{border-color:var(--yellow);color:var(--yellow)}
 .sname{text-align:center;font-size:16px;font-weight:700;letter-spacing:.1em}
 .smeta{text-align:center;font-size:10px;color:var(--muted);margin-top:3px}
+.lbl.fold{cursor:pointer;display:flex;justify-content:space-between;align-items:center;user-select:none}.lbl.fold:hover{color:var(--text)}
+.lbl.fold .chev{font-size:11px;letter-spacing:0}
+.tcnow{font-size:15px;font-weight:700;letter-spacing:.06em;font-variant-numeric:tabular-nums;color:var(--ok)}.tcnow.idle{color:var(--muted)}
 .tclock{font-size:32px;font-weight:700;letter-spacing:.04em;color:var(--ok);text-align:center;font-variant-numeric:tabular-nums;padding-top:6px}
 .tdate{font-size:10px;color:var(--muted);text-align:center;margin-top:4px}
 .big{font-size:34px;font-weight:700;letter-spacing:-.02em;line-height:1}.bigunit{font-size:15px;font-weight:400;margin-left:3px}
@@ -151,21 +154,27 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
     </div>
     <div class="card full">
       <div class="lbl">Timecode<span v-if="!tc.running" style="text-transform:none;letter-spacing:0;color:var(--yellow)"> &middot; the timecode service is not running</span></div>
-      <table v-if="cfgVlans.length"><thead><tr><th>VLAN</th><th>Name</th><th>Art-Net timecode</th><th>Last sent</th><th>Packets</th><th>MTC over RTP-MIDI</th></tr></thead>
+      <table v-if="cfgVlans.length"><thead><tr><th>VLAN</th><th>Name</th><th>Timecode now</th><th>Art-Net</th><th>Last sent</th><th>Packets</th><th>MTC over RTP-MIDI</th></tr></thead>
         <tbody><tr v-for="v in cfgVlans" :key="v.id">
           <td>{{ v.id }}</td><td>{{ v.name }}</td>
+          <td><span class="tcnow" :class="{idle: tcStat(v).artnet.state !== 'sending'}">{{ liveTc(v) }}</span>
+            <span v-if="tcStat(v).artnet.state !== 'sending'" style="color:var(--muted);font-size:10px"> not sending</span></td>
           <td :class="tcCls(v).artnet">{{ tcText(v).artnet }}</td>
           <td class="good">{{ tcStat(v).artnet.last || '' }}</td><td>{{ tcStat(v).artnet.state === 'sending' ? tcStat(v).artnet.sent : '' }}</td>
           <td :class="tcCls(v).mtc">{{ tcText(v).mtc }}</td></tr></tbody></table>
       <div v-else class="smeta" style="text-align:left">No VLANs configured yet.</div>
-      <div class="smeta" style="text-align:left;margin-top:8px">Timecode is the time of day in each VLAN's own time zone, sent once per frame. It is off unless you switch it on for a VLAN.</div>
+      <div class="smeta" style="text-align:left;margin-top:8px">"Timecode now" is the time of day in each VLAN's own time zone, as it would be sent (once per frame). It is only transmitted for VLANs where you switched Art-Net TC on (VLANS tab, then save and apply).</div>
     </div>
     <div class="card full">
-      <div class="lbl">Upstream sources</div>
+      <div class="lbl fold" @click="toggleCard('sources')" title="Click to fold or unfold" role="button" tabindex="0" @keydown.enter="toggleCard('sources')" :aria-expanded="!collapsed.sources">
+        <span>Upstream sources<span v-if="collapsed.sources" style="text-transform:none;letter-spacing:0"> &middot; {{ sources.length }} server{{ sources.length === 1 ? '' : 's' }}{{ sources.filter(s => s.state === '*').length ? ', synced to ' + (sources.find(s => s.state === '*').host || sources.find(s => s.state === '*').name) : '' }}</span></span>
+        <span class="chev">{{ collapsed.sources ? '▸' : '▾' }}</span></div>
+      <template v-if="!collapsed.sources">
       <table v-if="sources.length"><thead><tr><th></th><th>Server</th><th>Address</th><th>Stratum</th><th>Poll</th><th>Reach</th><th>Last rx</th><th>Offset</th></tr></thead>
         <tbody><tr v-for="s in sources" :key="s.name"><td :class="s.state==='*'?'good':''">{{ s.state==='*'?'● used':s.state==='+'?'+ ok':s.state }}</td>
           <td>{{ s.host || s.name }}</td><td style="color:var(--muted)">{{ s.host && s.host !== s.name ? s.name : '' }}</td><td>{{ s.stratum }}</td><td>{{ s.poll }}</td><td>{{ s.reach.toString(8) }}</td><td>{{ s.last_rx_s }} s</td><td>{{ fmtS(s.offset_s) }}</td></tr></tbody></table>
       <div v-else class="smeta" style="text-align:left">{{ chronyRunning ? 'No sources yet.' : 'chrony is not running.' }}</div>
+      </template>
     </div>
     <div class="card full">
       <div class="lbl">Interfaces</div>
