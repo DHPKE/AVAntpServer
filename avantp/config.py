@@ -40,6 +40,9 @@ def validate(cfg):
     _need(wan["iface"] != lan["iface"], "wan.iface and lan.iface must differ")
 
     wan.setdefault("mode", "dhcp")
+    # temporary SSH on the WAN side while the LAN/management VLAN is not cabled yet; must be switched off afterwards
+    wan.setdefault("commissioning_ssh", False)
+    _need(isinstance(wan["commissioning_ssh"], bool), "wan.commissioning_ssh must be true or false")
     _need(wan["mode"] in ("dhcp", "static"), "wan.mode must be dhcp or static")
     wan_net = None
     if wan["mode"] == "static":
