@@ -90,11 +90,12 @@ def nftables(cfg):
     for v in cfg["vlans"]:
         i = v["iface"]
         inp.append(f'    # VLAN {v["id"]} {v["name"]}')
+        to = f' ip daddr {v["_if"].ip}' if v["mode"] == "static" else ""  # a host on VLAN A cannot use VLAN B's address
         inp.append(f'    iifname "{i}" icmp type echo-request limit rate 5/second accept')
         if v["ntp"]:
-            inp.append(f'    iifname "{i}" udp dport 123 accept')
+            inp.append(f'    iifname "{i}"{to} udp dport 123 accept')
         if v["mgmt"]:
-            inp.append(f'    iifname "{i}" tcp dport {{ 22, {port} }} accept')
+            inp.append(f'    iifname "{i}"{to} tcp dport {{ 22, {port} }} accept')
         if v["mode"] == "dhcp":
             inp.append(f'    iifname "{i}" udp sport 67 udp dport 68 accept')
             outp.append(f'    oifname "{i}" udp sport 68 udp dport 67 accept')

@@ -105,7 +105,8 @@ class Render(unittest.TestCase):
 
     def test_webui_and_ssh_only_on_mgmt_vlan(self):
         n = render.nftables(cfg())
-        self.assertIn('iifname "enp3s0.10" tcp dport { 22, 8443 } accept', n)
+        self.assertIn('iifname "enp3s0.10" ip daddr 10.10.10.2 tcp dport { 22, 8443 } accept', n)
+        self.assertIn('iifname "enp3s0.20" ip daddr 10.20.0.2 udp dport 123 accept', n)
         self.assertNotIn('iifname "enp3s0.20" tcp', n)
 
     def test_commissioning_flag(self):
