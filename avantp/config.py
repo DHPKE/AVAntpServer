@@ -6,6 +6,7 @@ import re
 IFACE_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,14}$")
 NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 HOST_RE = re.compile(r"^(?=.{1,253}$)([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$")
+MAX_VLANS = 20
 FRAME_RATES = (24, 25, 29.97, 30)
 
 
@@ -40,9 +41,9 @@ def validate(cfg):
     _need(wan["iface"] != lan["iface"], "wan.iface and lan.iface must differ")
 
     wan.setdefault("mode", "dhcp")
-    # temporary SSH on the WAN side while the LAN/management VLAN is not cabled yet; must be switched off afterwards
-    wan.setdefault("commissioning_ssh", False)
-    _need(isinstance(wan["commissioning_ssh"], bool), "wan.commissioning_ssh must be true or false")
+    # temporary SSH + WebUI on the WAN side while no management VLAN exists yet; must be switched off afterwards
+    wan.setdefault("commissioning", False)
+    _need(isinstance(wan["commissioning"], bool), "wan.commissioning must be true or false")
     _need(wan["mode"] in ("dhcp", "static"), "wan.mode must be dhcp or static")
     wan_net = None
     if wan["mode"] == "static":
@@ -60,8 +61,8 @@ def validate(cfg):
     _need(up["default"] or up["backup"] or up["custom"], "at least one upstream NTP source required")
     up.setdefault("local_fallback", False)
 
-    vlans = cfg.get("vlans", [])
-    _need(vlans, "at least one VLAN required")
+    vlans = cfg.setdefault("vlans", [])
+    _need(len(vlans) <= MAX_VLANS, f"at most {MAX_VLANS} VLANs")
     ids, names, nets = set(), set(), []
     for v in vlans:
         vid = v.get("id")
@@ -96,7 +97,8 @@ def validate(cfg):
         tc.setdefault("fps", 25)
         _need(tc["fps"] in FRAME_RATES, f"vlan {vid}: timecode.fps must be one of {FRAME_RATES}")
         v["iface"] = f"{lan['iface']}.{vid}"
-    _need(any(v["mgmt"] for v in vlans), "at least one VLAN must have mgmt=true (WebUI/SSH access)")
+    _need(wan["commissioning"] or any(v["mgmt"] for v in vlans),
+          "at least one VLAN must have mgmt=true (WebUI/SSH access), or enable wan.commissioning")
     web = cfg.setdefault("webui", {})
     web.setdefault("port", 8443)
     _need(isinstance(web["port"], int) and 1024 <= web["port"] <= 65535, "webui.port invalid")

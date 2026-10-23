@@ -104,8 +104,8 @@ def nftables(cfg):
         if tc["mtc_rtp"]:
             inp.append(f'    iifname "{i}" udp dport {{ 5004, 5005 }} accept')
             outp.append(f'    oifname "{i}" udp dport {{ 5004, 5005 }} accept')
-    wan_ssh_in = (f'    # COMMISSIONING ONLY: SSH from the WAN side, switch off once the management VLAN works\n'
-                  f'    iifname "{wan}" tcp dport 22 accept\n') if cfg["wan"]["commissioning_ssh"] else ""
+    wan_ssh_in = (f'    # COMMISSIONING ONLY: SSH + WebUI from the WAN side, switch off once the management VLAN works\n'
+                  f'    iifname "{wan}" tcp dport {{ 22, {port} }} accept\n') if cfg["wan"]["commissioning"] else ""
     wan_dhcp_in = f'    iifname "{wan}" udp sport 67 udp dport 68 accept\n' if cfg["wan"]["mode"] == "dhcp" else ""
     wan_dhcp_out = f'    oifname "{wan}" udp sport 68 udp dport 67 accept\n' if cfg["wan"]["mode"] == "dhcp" else ""
     nl = "\n"

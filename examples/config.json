@@ -1,6 +1,6 @@
 {
-  "wan": {"iface": "eth0", "mode": "dhcp"},
-  "lan": {"iface": "eth1"},
+  "wan": {"iface": "enp4s0", "mode": "dhcp"},
+  "lan": {"iface": "enp3s0"},
   "upstream": {
     "default": ["pool.ntp.org"],
     "backup": ["time.cloudflare.com"],
