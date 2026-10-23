@@ -104,6 +104,27 @@ class TailTest(unittest.TestCase):
             logs.tail("all", "all", 50, 0)
         self.assertEqual(self.argv(m)[self.argv(m).index("-n") + 1], "50")                  # unfiltered: exactly what is shown
 
+    def test_clear_hides_entries_up_to_a_moment_without_touching_the_journal(self):
+        data = journal(entry("old a", ts=1792781000000000), entry("old b", ts=1792781100000000),
+                       entry("new c", ts=1792781200000000), entry("new d", ts=1792781300000000))
+        with run_with(data) as m:
+            r = logs.tail("all", "all", 50, 0, since=1792781150)
+        self.assertEqual([l.split(": ", 1)[1] for l in r["lines"]], ["new c", "new d"])
+        self.assertTrue(all("--vacuum" not in a and "--rotate" not in a for a in m.call_args[0][0]))        # read-only
+        with run_with(data):
+            self.assertEqual(len(logs.tail("all", "all", 50, 0, since=0)["lines"]), 4)                   # 0 = nothing cleared
+            self.assertEqual(len(logs.tail("all", "all", 50, 0, since="1792781150")["lines"]), 2)       # as it arrives from the URL
+            self.assertEqual(logs.tail("all", "all", 50, 0, since=1792781400)["lines"], [])              # everything cleared
+        with run_with(journal(entry("timecode: WARNING w1", ts=1792781000000000), entry("timecode: WARNING w2", ts=1792781300000000))):
+            self.assertEqual(len(logs.tail("all", "warning", 50, 0, since=1792781150)["lines"]), 1)      # combines with the level
+
+    def test_a_bad_since_is_refused(self):
+        for bad in (-1, "x", "1e999", 4102444800 * 2, None):
+            with run_with("") as m:
+                with self.assertRaises((ValueError, TypeError)):
+                    logs.tail("all", "all", 50, 0, since=bad)
+            m.assert_not_called()
+
     def test_odd_messages_do_not_break_it(self):
         data = journal(json.dumps({"MESSAGE": [104, 105, 255], "PRIORITY": "6", "__REALTIME_TIMESTAMP": "1792781000000000"}),
                        json.dumps({"PRIORITY": "oops", "__REALTIME_TIMESTAMP": "x"}), "not json at all",

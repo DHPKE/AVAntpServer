@@ -166,6 +166,7 @@ class HandleTest(unittest.TestCase):
         st = self.status()
         self.assertEqual((st["state"], st["from_version"], st["installed"]), ("done", "0021bf5", "b47ea20"))
         self.assertEqual(runner.seen, ["Downloading", "Installing"])                    # the step follows the script's output
+        self.assertEqual((st["check"]["state"], st["check"]["ahead_by"]), ("uptodate", 0))   # the old "newer" result is not kept
         self.assertEqual(self.windows(), [True, False])
         self.assertEqual(self.windows().count(True), 1)
 

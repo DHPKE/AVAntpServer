@@ -35,11 +35,24 @@ createApp({setup() {
     startBeat()
     loadBoots()
   }
+  // ---- dismissing messages: remembered per event (its time), so a NEW error shows up again
+  const dismissedEvents = reactive({})
+  try { Object.assign(dismissedEvents, JSON.parse(localStorage.getItem('avantp-dismissedEvents') || '{}')) } catch (_) {}
+  const dis = (k, t) => t !== undefined && dismissedEvents[k] === String(t)
+  function dismiss(k, t) {
+    dismissedEvents[k] = String(t)
+    try { localStorage.setItem('avantp-dismissedEvents', JSON.stringify(dismissedEvents)) } catch (_) {}
+  }
   // ---- log window
   const logSel = reactive({source: 'all', level: 'all', boot: 0, lines: 200, auto: true})
   const logLines = ref([]), logErr = ref(''), logLoaded = ref(false), logbox = ref(null)
   const boots = ref([]), bootsErr = ref(''), dismissed = ref('')
   try { dismissed.value = localStorage.getItem('avantp-restart-dismissed') || '' } catch (_) {}
+  const logSince = ref(0)                                      // CLEAR hides what was logged before this moment (this window only)
+  try { logSince.value = +localStorage.getItem('avantp-log-since') || 0 } catch (_) {}
+  const keepSince = () => { try { localStorage.setItem('avantp-log-since', String(logSince.value)) } catch (_) {} }
+  function clearLog() { logSince.value = utcMs.value / 1000; keepSince(); logLines.value = []; loadLog() }
+  function showAllLog() { logSince.value = 0; keepSince(); loadLog() }
   let logTimer = null
   const dt = t => t ? new Date(t * 1000).toISOString().replace('T', ' ').slice(0, 19) + ' UTC' : ''
   function logCls(l) {
@@ -50,6 +63,7 @@ createApp({setup() {
   async function loadLog() {
     try {
       const q = new URLSearchParams({source: logSel.source, level: logSel.level, boot: logSel.boot, lines: logSel.lines})
+      if (logSince.value > 0) q.set('since', logSince.value.toFixed(3))
       const d = await api('GET', '/api/logs?' + q)
       const box = logbox.value
       const atEnd = !box || box.scrollHeight - box.scrollTop - box.clientHeight < 40
@@ -301,7 +315,7 @@ createApp({setup() {
     if (s.state === 'checking') return 'Asking GitHub for the latest version…'
     if (s.state === 'updating') return 'Updating: ' + (s.step || 'working') + '…'
     if (s.state === 'done') return 'Updated from ' + (s.from_version || '?') + ' to ' + (s.installed || '?') + '. The page reloads in a moment; log in again.'
-    if (s.state === 'error') return s.error || 'Something went wrong.'
+    if (s.state === 'error' && !dis('sw', s.time)) return s.error || 'Something went wrong.'
     if (s.state === 'uptodate' || c.state === 'uptodate') return 'You are up to date.'
     if (c.state === 'newer') return (c.ahead_by > 1 ? c.ahead_by + ' newer commits' : 'A newer version') + ' on GitHub: "' + c.message + '"'
     if (c.state === 'local-newer') return 'This box runs a version that is newer than GitHub (a local build).'
@@ -410,7 +424,7 @@ createApp({setup() {
 
   onMounted(start)
   onUnmounted(stop)
-  return {sw, swBusy, applyBusy, cfgReady, swFresh, swCls, swText, swAsk, logSel, logLines, logErr, logLoaded, logbox, boots, bootsErr, dt, logCls, loadLog, loadBoots, copyLog, restartNotice, dismissRestart, lastUpdate, dhcpState, collapsed, toggleCard, liveTc, synced, um, umLeftText, setUpdateMode, version, tabs, tab, user, needsSetup, lu, lp, loginErr, busy, connected, doLogin, doLogout, draft, up, msg, msgCls, pw,
+  return {dis, dismiss, logSince, clearLog, showAllLog, sw, swBusy, applyBusy, cfgReady, swFresh, swCls, swText, swAsk, logSel, logLines, logErr, logLoaded, logbox, boots, bootsErr, dt, logCls, loadLog, loadBoots, copyLog, restartNotice, dismissRestart, lastUpdate, dhcpState, collapsed, toggleCard, liveTc, synced, um, umLeftText, setUpdateMode, version, tabs, tab, user, needsSetup, lu, lp, loginErr, busy, connected, doLogin, doLogout, draft, up, msg, msgCls, pw,
     ap, left, recent, applyNow, confirm, cfg, shown, tr, chronyRunning, sources, ifaces, ifaceNames, syncCls, syncTxt, syncIcon, syncName, fmtS, off, offCls, utcNow,
     tzLabel, tzGroups, localTime, tcText, tcCls, tcStat, tc, utcDate, vlanAddr, cfgVlans, hasPending, draftDirty, wanDns, addVlan, save, changePw}
 }}).mount('#app')

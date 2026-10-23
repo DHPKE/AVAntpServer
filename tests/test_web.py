@@ -151,7 +151,11 @@ class WebTest(unittest.TestCase):
         with mock.patch("avantp.web.logs.tail", return_value={"lines": ["x"], "error": None}) as m:
             st, d, _ = self.req("GET", "/api/logs?source=timecode&level=warning&lines=50&boot=-1", cookie=ck)
         self.assertEqual((st, d["lines"]), (200, ["x"]))
-        m.assert_called_once_with("timecode", "warning", "50", "-1")
+        m.assert_called_once_with("timecode", "warning", "50", "-1", "0")
+        with mock.patch("avantp.web.logs.tail", return_value={"lines": [], "error": None}) as m:
+            self.req("GET", "/api/logs?source=all&since=1792781150.5", cookie=ck)
+        self.assertEqual(m.call_args[0][4], "1792781150.5")                                       # CLEAR is passed on, validated in logs
+        self.assertEqual(self.req("GET", "/api/logs?since=notanumber", cookie=ck)[0], 400)
         with mock.patch("avantp.web.logs.tail", side_effect=ValueError("bad")):
             self.assertEqual(self.req("GET", "/api/logs?source=--vacuum-size=1", cookie=ck)[0], 400)
         with mock.patch("avantp.web.logs.boots", return_value={"boots": [], "error": None}):

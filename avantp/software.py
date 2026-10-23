@@ -197,7 +197,9 @@ def handle(paths, ex, fetch=github, runner=run_update_script, now=time.time, fre
             _status(paths, state="error", check=result, error=f"update failed: {hint}", log=tail)
             return "error"
         log.info("updated: %s -> %s", inst, new)
-        _status(paths, state="done", check=result, step="Done", log=tail, from_version=inst, installed=new)
+        # what was "newer" a minute ago is now installed: the remembered check must not keep saying there is something to update
+        _status(paths, state="done", check=dict(result, state="uptodate", ahead_by=0, installed=new), step="Done", log=tail,
+                from_version=inst, installed=new)
         return "done"
     finally:
         if opened:

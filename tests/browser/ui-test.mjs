@@ -158,6 +158,9 @@ await ev(`[...document.querySelectorAll('.banner .btn')].find(b=>b.textContent.i
 seen = false
 for (let i = 0; i < 40 && !seen; i++) { await sleep(400); seen = (await text()).includes('Rolled back') }
 check('unconfirmed change is rolled back and says why', seen && (await text()).includes('not confirmed within'), (await text()).slice(0, 300))
+check('the rolled-back message has a dismiss button', await ev(`[...document.querySelectorAll('.banner')].some(b => b.textContent.includes('Rolled back') && b.querySelector('.xbtn'))`))
+await ev(`[...document.querySelectorAll('.banner')].find(b => b.textContent.includes('Rolled back')).querySelector('.xbtn').click()`); await sleep(300)
+check('... and dismissing removes it', !(await text()).includes('Rolled back'))
 
 // bad config is refused by the server and shown
 await ev(`(()=>{const r=document.querySelectorAll('tbody tr');const e=r[1].querySelectorAll('input')[0];e.value=10;e.dispatchEvent(new Event('input'))})()`)
@@ -237,6 +240,9 @@ await shot('5-monitor-vlans')
 // SYSTEM tab: Software card: check for updates, update, progress, reload
 await tab('SYSTEM'); await sleep(500)
 t = await text()
+const sysTitles = await ev(`[...document.querySelectorAll('.sform > .card > .lbl')].map(e => e.textContent.trim())`)
+check('the SYSTEM tab has Software, one merged System box (version + re-apply) and the password box', JSON.stringify(sysTitles) === JSON.stringify(['Software', 'System', 'Change password (admin)']), JSON.stringify(sysTitles))
+check('... the System box holds the version, the RE-APPLY button and the update hint', await ev(`(() => { const c = [...document.querySelectorAll('.sform > .card')].find(c => c.querySelector('.lbl').textContent.trim() === 'System'); return !!c && c.textContent.includes('Installed version') && c.textContent.includes('RE-APPLY CURRENT CONFIG') && c.textContent.includes('Software') })()`))
 check('Software card replaces the old Update-mode card (version, latest, two buttons)', t.includes('SOFTWARE') && t.includes('Latest on GitHub') && t.includes('not checked yet') && t.includes('CHECK FOR UPDATES') && t.includes('UPDATE NOW'), t.slice(0, 300))
 check('the manual Update mode is still there, folded under Advanced', t.includes('Advanced: open web access by hand') && await ev(`!!document.querySelector('details') && !document.querySelector('details').open && [...document.querySelectorAll('details .btn')].some(b => b.textContent.includes('ENTER UPDATE MODE'))`))
 const btn = label => `[...document.querySelectorAll('.card .btn')].find(b => b.textContent.includes('${label}'))`
@@ -268,6 +274,9 @@ await ev(`${btn('CHECK FOR UPDATES')}.click()`)
 let errSeen = false
 for (let i = 0; i < 40 && !errSeen; i++) { await sleep(250); errSeen = (await text()).includes('Could not reach GitHub') }
 check('with no connection to GitHub the card says so', errSeen, (await text()).slice(0, 200))
+check('the software error can be dismissed', await ev(`!![...document.querySelectorAll('.card .smeta .xbtn')].find(b => b.parentElement.textContent.includes('Could not reach GitHub'))`))
+await ev(`[...document.querySelectorAll('.card .smeta .xbtn')].find(b => b.parentElement.textContent.includes('Could not reach GitHub')).click()`); await sleep(400)
+check('... and then the card falls back to the normal status text', !(await text()).includes('Could not reach GitHub') && (await text()).includes('You are up to date'), (await text()).slice(0, 200))
 fakeGithub({'/commits/main': {sha: NEW, commit: {message: 'Smoother pulse', committer: {date: '2026-10-23T22:00:00Z'}}}})
 await ev(`${btn('UPDATE NOW')}.click()`)
 let upToDate = false
@@ -281,6 +290,7 @@ check('short new password rejected', (await text()).includes('at least 10 charac
 // reload keeps session and shows saved config
 await send('Page.reload'); await sleep(2500)
 t = await text(); check('reload: still logged in', t.includes('MONITOR'))
+check('reload: a dismissed message stays dismissed (remembered per event in this browser)', !t.includes('Rolled back'))
 check('reload: saved VLANs persisted', t.includes('show') && t.includes('Dante Prim'))
 
 // VLANS tab: DHCP rows show the address the system really received
@@ -300,6 +310,15 @@ await tab('LOG'); await sleep(900)
 t = await text()
 check('LOG tab shows the AVAntp services log', t.includes('timecode sender started') && t.includes('Art-Net sending 25 fps'), t.slice(0, 300))
 check('errors are red and warnings yellow', await ev(`(() => { const l = [...document.querySelectorAll('.logbox .ln')]; const c = k => l.filter(x => x.textContent.includes(k)); return c('unexpected error')[0].classList.contains('bad') && c('Traceback')[0].classList.contains('bad') && c('rolling back')[0].classList.contains('warn') && !c('sender started')[0].classList.contains('bad') })()`))
+const logLinesShown = () => ev(`document.querySelectorAll('.logbox .ln:not(.dim)').length`)
+check('before CLEAR the log window has entries', (await logLinesShown()) > 3)
+await ev(`[...document.querySelectorAll('.logbar .btn')].find(b => b.textContent.includes('CLEAR')).click()`); await sleep(800)
+t = await text()
+check('CLEAR empties the log window and says what it did (older entries are kept in the journal)', (await logLinesShown()) === 0 && t.includes('Cleared at') && t.includes('SHOW ALL') && t.includes('journal keeps them'), t.slice(t.indexOf('LOG'), t.indexOf('LOG') + 400))
+await sleep(3600)
+check('... it stays cleared when the window refreshes by itself (every 3 s)', (await logLinesShown()) === 0)
+await ev(`[...document.querySelectorAll('a')].find(a => a.textContent.includes('SHOW ALL')).click()`); await sleep(800)
+check('SHOW ALL brings everything back', (await logLinesShown()) > 3 && !(await text()).includes('Cleared at'))
 await setVal('.logbar select', 'kernel'); await sleep(700)
 t = await text()
 check('source "kernel" shows NIC link messages (SmartSpeed downgrade is flagged)', t.includes('Link Speed was downgraded by SmartSpeed') && await ev(`[...document.querySelectorAll('.logbox .ln')].some(x => x.textContent.includes('SmartSpeed') && x.classList.contains('warn'))`))

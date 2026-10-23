@@ -184,7 +184,7 @@ def make_handler(app):
                 q = {k: v[0] for k, v in parse_qs(urlsplit(self.path).query).items()}
                 try:
                     return self.send(200, logs.tail(q.get("source", "all"), q.get("level", "all"),
-                                                     q.get("lines", "200"), q.get("boot", "0")))
+                                                     q.get("lines", "200"), q.get("boot", "0"), q.get("since", "0")))
                 except (ValueError, TypeError):
                     return self.err(400, "bad log request")
             if path == "/api/boots":

@@ -72,13 +72,16 @@ def _line(entry):
     return f"{ts} {entry.get('_HOSTNAME', '')} {ident}{pid}: {_message(entry)}"
 
 
-def tail(source="all", level="all", lines=200, boot=0):
+def tail(source="all", level="all", lines=200, boot=0, since=0):
     if source not in SOURCES or level not in LEVELS:
         raise ValueError("unknown source or level")
     lines = max(20, min(MAX_LINES, int(lines)))
     boot = int(boot)
     if not -5 <= boot <= 0:
         raise ValueError("boot must be 0 (this boot) down to -5")
+    since = float(since)                                     # CLEAR in the WebUI: hide entries older than this (epoch seconds)
+    if not 0 <= since < time.time() + 3600:
+        raise ValueError("bad since")
     limit = LEVELS[level]                                    # None, or the worst acceptable syslog number (4 or 3)
     scan = lines if limit is None else min(MAX_SCAN, max(lines * 10, 1000))
     args = ["-o", "json", "-n", str(scan), "-b", str(boot)]
@@ -95,6 +98,12 @@ def tail(source="all", level="all", lines=200, boot=0):
             entry = json.loads(raw)
         except ValueError:
             continue
+        if since:
+            try:
+                if int(entry.get("__REALTIME_TIMESTAMP", 0)) / 1e6 <= since:
+                    continue
+            except (TypeError, ValueError):
+                continue
         if limit is None or severity(entry) <= limit:
             keep.append(_line(entry))
     text = "\n".join(keep[-lines:])[-MAX_BYTES:]

@@ -70,6 +70,7 @@ textarea{resize:vertical;min-height:70px}
 .sst.ok{background:rgba(var(--accent-rgb),.14);color:var(--ok)}.sst.err{background:rgba(239,68,68,.1);color:var(--red)}
 .banner{margin:12px 16px 0;padding:8px 12px;border-left:3px solid var(--yellow);background:rgba(245,158,11,.08);border-radius:0 4px 4px 0;font-size:10px}
 .banner.ok{border-left-color:var(--ok);background:rgba(var(--accent-rgb),.12)}
+.xbtn{float:right;background:transparent;border:0;color:var(--muted);cursor:pointer;font-size:14px;line-height:1;padding:0 2px 0 10px;font-family:inherit}.xbtn:hover{color:var(--text)}
 .banner.red{border-left-color:var(--red);background:rgba(239,68,68,.1)}
 .actions{padding:0 16px 16px;display:flex;gap:10px;align-items:center}
 .login{max-width:340px;margin:12vh auto;padding:0 16px}
@@ -116,14 +117,14 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
   <div class="banner" v-else-if="draftDirty">Unsaved changes. Press <b>SAVE</b> on the tab you edited.</div>
   <div class="banner" v-else-if="hasPending">Saved, but not active on the system yet.
     <button class="btn" style="margin-left:12px" :disabled="busy" @click="applyNow">APPLY TO SYSTEM</button></div>
-  <div class="banner red" v-if="recent(ap) && ap.state==='rolled-back'">Rolled back: {{ ap.reason }}</div>
-  <div class="banner red" v-if="recent(ap) && ap.state==='error'">Apply refused: {{ ap.error }}</div>
-  <div class="banner ok" v-if="recent(ap, 60) && ap.state==='applied'">Applied and confirmed.</div>
+  <div class="banner red" v-if="recent(ap) && ap.state==='rolled-back' && !dis('ap', ap.time)">Rolled back: {{ ap.reason }}<button class="xbtn" title="Dismiss" aria-label="Dismiss" @click="dismiss('ap', ap.time)">&#10005;</button></div>
+  <div class="banner red" v-if="recent(ap) && ap.state==='error' && !dis('ap', ap.time)">Apply refused: {{ ap.error }}<button class="xbtn" title="Dismiss" aria-label="Dismiss" @click="dismiss('ap', ap.time)">&#10005;</button></div>
+  <div class="banner ok" v-if="recent(ap, 60) && ap.state==='applied' && !dis('ap', ap.time)">Applied and confirmed.<button class="xbtn" title="Dismiss" aria-label="Dismiss" @click="dismiss('ap', ap.time)">&#10005;</button></div>
   <div class="banner red" v-if="restartNotice">The box restarted unexpectedly: the previous boot ended at <b>{{ restartNotice.at }}</b> without a shutdown (power loss, reset or crash).
     <button class="btn ghost" style="margin-left:12px" @click="tab='log'">OPEN LOG</button>
     <button class="btn ghost" style="margin-left:6px" @click="dismissRestart">DISMISS</button></div>
   <div class="banner red" v-if="sw.state==='updating'">Software update running (<b>{{ sw.step || 'working' }}</b>). Do not switch the box off. The WebUI restarts in a moment; the page reloads when it is done.</div>
-  <div class="banner ok" v-else-if="sw.state==='done' && swFresh">Updated to <b>{{ sw.installed }}</b>.</div>
+  <div class="banner ok" v-else-if="sw.state==='done' && swFresh && !dis('sw', sw.time)">Updated to <b>{{ sw.installed }}</b>.<button class="xbtn" title="Dismiss" aria-label="Dismiss" @click="dismiss('sw', sw.time)">&#10005;</button></div>
   <div class="banner" v-if="um.state==='on'">UPDATE MODE is on: this box may reach package servers (web ports 80/443 on the WAN) for another <b>{{ umLeftText }}</b>. It closes by itself.</div>
   <div class="banner red" v-if="draft && draft.wan.commissioning">COMMISSIONING is on: SSH and this WebUI are reachable from the WAN side. Switch it off in NETWORK once a management VLAN works.</div>
 
@@ -220,7 +221,7 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
       <div class="smeta" style="text-align:left;margin-top:8px">Temporary. Use it only until a management VLAN is reachable, then switch it off.</div>
     </div>
   </div>
-  <div class="sst" :class="msgCls" v-if="msg">{{ msg }}</div>
+  <div class="sst" :class="msgCls" v-if="msg">{{ msg }}<button class="xbtn" title="Dismiss" aria-label="Dismiss" @click="msg=''">&#10005;</button></div>
   <div class="actions"><button class="btn" :disabled="busy" @click="save">SAVE</button></div>
   </template>
 
@@ -249,7 +250,7 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
     <div style="margin-top:12px"><button class="btn ghost" :disabled="draft.vlans.length>=20" @click="addVlan">+ ADD VLAN</button></div>
     <div class="smeta" style="text-align:left;margin-top:10px">Timecode outputs are off by default. Art-Net goes out as a broadcast on the VLAN or as unicast to one receiver on that VLAN's own network. The time zone (pick a city, daylight saving is automatic) sets the VLAN's local time and timecode; NTP itself always carries UTC. DHCP VLANs never accept routes, DNS or NTP from the server.</div>
   </div></div>
-  <div class="sst" :class="msgCls" v-if="msg">{{ msg }}</div>
+  <div class="sst" :class="msgCls" v-if="msg">{{ msg }}<button class="xbtn" title="Dismiss" aria-label="Dismiss" @click="msg=''">&#10005;</button></div>
   <div class="actions"><button class="btn" :disabled="busy" @click="save">SAVE</button></div>
   </template>
 
@@ -265,7 +266,7 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
     <div class="card sfull"><label class="chk"><input type="checkbox" v-model="draft.upstream.local_fallback"> Keep serving time (stratum 10) when no upstream is reachable</label>
       <div class="smeta" style="text-align:left;margin-top:6px">Off is safer: clients then see the server as unsynchronised instead of trusting a drifting clock.</div></div>
   </div>
-  <div class="sst" :class="msgCls" v-if="msg">{{ msg }}</div>
+  <div class="sst" :class="msgCls" v-if="msg">{{ msg }}<button class="xbtn" title="Dismiss" aria-label="Dismiss" @click="msg=''">&#10005;</button></div>
   <div class="actions"><button class="btn" :disabled="busy" @click="save">SAVE</button></div>
   </template>
 
@@ -285,8 +286,10 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
         <div class="f"><label class="slbl">Lines</label><select v-model.number="logSel.lines" @change="loadLog"><option>100</option><option>200</option><option>500</option><option>1000</option></select></div>
         <label class="chk" style="margin-bottom:6px"><input type="checkbox" v-model="logSel.auto"> update every 3 s</label>
         <button class="btn ghost" @click="loadLog(); loadBoots()">REFRESH</button>
+        <button class="btn ghost" title="Hide everything logged so far in this window. The journal itself is not touched." @click="clearLog">CLEAR</button>
         <button class="btn ghost" @click="copyLog">COPY</button>
       </div>
+      <div class="smeta" v-if="logSince > 0" style="text-align:left;margin:0 0 8px">Cleared at {{ dt(logSince) }}: older entries are hidden here (the journal keeps them). <a href="#" @click.prevent="showAllLog" style="color:var(--accent)">SHOW ALL</a></div>
       <div class="sst err" v-if="logErr" style="margin:0 0 10px">{{ logErr }}</div>
       <div class="logbox" ref="logbox"><template v-if="logLines.length"><div v-for="(l, i) in logLines" :key="i" class="ln" :class="logCls(l)">{{ l }}</div></template>
         <div v-else class="ln dim">{{ logLoaded ? 'No log lines for this selection.' : 'Loading…' }}</div></div>
@@ -304,15 +307,11 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
 
   <!-- SYSTEM -->
   <div class="sform" v-if="tab==='system'">
-    <div class="card"><div class="lbl">Re-apply</div>
-      <div class="smeta" style="text-align:left;margin-bottom:12px">Loads the active configuration again, with the same safety net (confirm within 90 s). Use it after a software update, so the box gets the newest firewall and network rules.</div>
-      <button class="btn ghost" :disabled="busy || !cfg.active || ap.state==='applying' || ap.state==='pending-confirm'" @click="applyNow(true)">RE-APPLY CURRENT CONFIG</button>
-    </div>
     <div class="card"><div class="lbl">Software</div>
       <div class="cr"><span class="ck">Installed</span><span class="cv">{{ version || 'unknown' }}</span></div>
       <div class="cr"><span class="ck">Latest on GitHub</span><span class="cv" :class="swCls">{{ sw.check ? sw.check.latest : 'not checked yet' }}</span></div>
       <div class="cr" v-if="sw.check && sw.check.date"><span class="ck">Published</span><span class="cv">{{ sw.check.date.slice(0, 10) }}</span></div>
-      <div class="smeta" style="text-align:left;margin:10px 0" :style="sw.state==='error' ? {color:'var(--red)'} : {}">{{ swText }}</div>
+      <div class="smeta" style="text-align:left;margin:10px 0" :style="sw.state==='error' && !dis('sw', sw.time) ? {color:'var(--red)'} : {}">{{ swText }}<button v-if="sw.state==='error' && !dis('sw', sw.time)" class="xbtn" title="Dismiss" aria-label="Dismiss" @click="dismiss('sw', sw.time)">&#10005;</button></div>
       <div v-if="swBusy" style="margin:0 0 10px">
         <div class="cr"><span class="ck">Step</span><span class="cv warnc">{{ sw.step || 'Working' }}&hellip;</span></div>
         <div class="logbox" style="height:auto;max-height:130px;margin-top:6px;font-size:10px"><div v-for="(l, i) in (sw.log || [])" :key="i" class="ln dim">{{ l }}</div><div v-if="!(sw.log || []).length" class="ln dim">&hellip;</div></div>
@@ -325,12 +324,16 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
         <div class="smeta" style="text-align:left;margin:6px 0 10px">Opens ports 80 and 443 on the WAN side for 15 minutes so that <b>sudo apt update &amp;&amp; sudo apt upgrade</b> works on the box. Closes by itself.</div>
         <button class="btn" v-if="um.state!=='on'" :disabled="busy || applyBusy || !cfg.active" @click="setUpdateMode(true)">ENTER UPDATE MODE</button>
         <button class="btn ghost" v-else :disabled="busy" @click="setUpdateMode(false)">END UPDATE MODE</button>
-        <div class="sst err" v-if="um.state==='error'" style="margin:10px 0 0">{{ um.error }}</div>
+        <div class="sst err" v-if="um.state==='error' && !dis('um', um.time)" style="margin:10px 0 0">{{ um.error }}<button class="xbtn" title="Dismiss" aria-label="Dismiss" @click="dismiss('um', um.time)">&#10005;</button></div>
       </details>
     </div>
-    <div class="card"><div class="lbl">About</div>
+    <div class="card"><div class="lbl">System</div>
       <div class="cr"><span class="ck">Installed version</span><span class="cv">{{ version || 'unknown' }}</span></div>
-      <div class="smeta" style="text-align:left;margin-top:8px">To update, use the <b>Software</b> card. By hand on the box: <b>sudo /opt/avantp/deploy/update.sh</b>.</div></div>
+      <div class="div"></div>
+      <div class="smeta" style="text-align:left;margin-bottom:12px"><b>Re-apply</b> loads the active configuration again, with the same safety net (confirm within 90 s). Use it after a software update, so the box gets the newest firewall and network rules.</div>
+      <button class="btn ghost" :disabled="busy || !cfg.active || ap.state==='applying' || ap.state==='pending-confirm'" @click="applyNow(true)">RE-APPLY CURRENT CONFIG</button>
+      <div class="smeta" style="text-align:left;margin-top:14px">To update the software use the <b>Software</b> card. By hand on the box: <b>sudo /opt/avantp/deploy/update.sh</b>.</div>
+    </div>
     <div class="card"><div class="lbl">Change password ({{ user }})</div>
       <form @submit.prevent="changePw">
         <div class="sf"><label class="slbl">Current</label><input type="password" v-model="pw.old" autocomplete="current-password"></div>
