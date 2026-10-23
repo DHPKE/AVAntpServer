@@ -102,6 +102,27 @@ class WebTest(unittest.TestCase):
         self.assertEqual(self.req("GET", "/api/config", cookie=ck2)[0], 200)
         self.app.users.set_password("admin", "correct horse battery")
 
+    def test_apply_and_confirm_endpoints(self):
+        _, ck, csrf = self.login()
+        st, d, _ = self.req("POST", "/api/apply", {}, cookie=ck, csrf=csrf)
+        self.assertEqual(st, 409)                                   # nothing saved yet differs from active
+        self.req("PUT", "/api/config", BASE, cookie=ck, csrf=csrf)
+        self.assertEqual(self.req("GET", "/api/apply", cookie=ck)[1]["state"], "idle")
+        self.assertEqual(self.req("POST", "/api/apply", {}, cookie=None, csrf=csrf)[0], 401)
+        self.assertEqual(self.req("POST", "/api/apply", {}, cookie=ck)[0], 403)   # CSRF
+        st, d, _ = self.req("POST", "/api/apply", {}, cookie=ck, csrf=csrf)
+        self.assertEqual((st, d["state"]), (202, "queued"))
+        self.assertTrue(os.path.exists(os.path.join(self.dir, "apply.request")))
+        os.unlink(os.path.join(self.dir, "apply.request"))
+        self.assertEqual(self.req("POST", "/api/confirm", {}, cookie=ck, csrf=csrf)[0], 409)   # nothing waiting
+        for state, code in (("applying", 409), ("pending-confirm", 409)):
+            json.dump({"state": state}, open(os.path.join(self.dir, "status.json"), "w"))
+            self.assertEqual(self.req("POST", "/api/apply", {}, cookie=ck, csrf=csrf)[0], code)   # no double apply
+        self.assertEqual(self.req("POST", "/api/confirm", {}, cookie=ck, csrf=csrf)[0], 200)
+        self.assertTrue(os.path.exists(os.path.join(self.dir, "confirm")))
+        os.unlink(os.path.join(self.dir, "confirm"))
+        os.unlink(os.path.join(self.dir, "status.json"))
+
     def test_logout(self):
         _, ck, csrf = self.login()
         self.assertEqual(self.req("POST", "/api/logout", {}, cookie=ck, csrf=csrf)[0], 200)

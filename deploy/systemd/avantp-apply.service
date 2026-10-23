@@ -1,0 +1,10 @@
+[Unit]
+Description=Apply the saved AVAntpServer config (rolls back unless confirmed in the WebUI)
+
+[Service]
+Type=oneshot
+Environment=PYTHONPATH=/opt/avantp
+ExecStart=/usr/bin/python3 -m avantp apply
+RuntimeDirectory=avantp
+RuntimeDirectoryPreserve=yes
+TimeoutStartSec=infinity

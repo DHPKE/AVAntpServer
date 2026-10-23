@@ -10,10 +10,11 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-from avantp import config, render  # noqa: E402
+from avantp import apply, config, render  # noqa: E402
 
 CFG = {
     "wan": {"iface": "enp4s0", "mode": "dhcp", "commissioning": False},
@@ -192,11 +193,82 @@ def main():
     check("control: pin removed AND output opened -> the VLAN 10 host DOES get an answer (check can detect a leak)",
           reach_via("lanhost", "lan0.10", "10.20.0.2", 123), True)
 
+    helper_tests(check, True)
+
     listener.kill()
     for n in ("box", "wanpeer", "lanhost"):
         sh(f"ip netns del {n}")
     print("ALL PASS" if all(results) else "SOME FAILED", f"({sum(results)}/{len(results)})")
     return 0 if all(results) else 1
+
+
+class NetnsExecutor(apply.SystemExecutor):
+    """The real helper logic with REAL nft/sysctl, but inside the 'box' namespace; service/network manager calls are skipped."""
+
+    def sh(self, *argv, check=True, timeout=60):
+        if argv[0] in ("nft", "sysctl"):
+            argv = ("ip", "netns", "exec", "box") + argv
+        elif argv[0] in ("systemctl", "networkctl", "ifdown", "ip"):
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+        if check and r.returncode:
+            raise RuntimeError(f"{' '.join(argv)}: {(r.stderr or r.stdout).strip()[:300]}")
+        return r
+
+
+def helper_tests(check, listener_ok):
+    """Run apply_once against the live box namespace and look at the kernel afterwards."""
+    root = tempfile.mkdtemp()
+    p = apply.Paths(root)
+    os.makedirs(p.data)
+    os.makedirs(p.run)
+    ex = NetnsExecutor(p)
+    sh("nft delete table inet avantp", "box")
+    run("sysctl -q -w net.ipv4.ip_forward=1", "box")          # start from a deliberately bad state
+
+    def request(cfg):
+        json.dump(cfg, open(os.path.join(p.data, "pending.json"), "w"))
+        open(os.path.join(p.data, "apply.request"), "w").close()
+
+    def tables():
+        return sh("nft list tables", "box").stdout
+
+    print("--- root helper with the real kernel: unconfirmed change")
+    request(CFG)
+    check("helper: unconfirmed apply reports rolled-back", apply.apply_once(p, ex, confirm_seconds=1, poll=0.1), "rolled-back")
+    check("helper: ... and the firewall table is gone again (previous state restored)", "avantp" in tables(), False)
+    check("helper: ... and no generated file is left behind", os.path.exists(os.path.join(root, "etc/avantp/nftables.nft")), False)
+
+    print("--- root helper with the real kernel: confirmed change")
+    request(CFG)
+
+    def press():
+        while json.load(open(os.path.join(p.run, "status.json"))).get("state") != "pending-confirm":
+            time.sleep(0.05)
+        open(os.path.join(p.data, "confirm"), "w").close()
+    threading.Thread(target=press, daemon=True).start()
+    check("helper: confirmed apply reports applied", apply.apply_once(p, ex, confirm_seconds=10, poll=0.1), "applied")
+    check("helper: firewall table is loaded in the kernel", "avantp" in tables(), True)
+    check("helper: forwarding switched off by the generated sysctl file",
+          sh("sysctl -n net.ipv4.ip_forward", "box").stdout.strip(), "0")
+    check("helper: after apply the LAN host still cannot reach the WAN peer", ping("lanhost", "10.99.0.1"), False)
+    check("helper: after apply the WAN peer cannot reach the LAN host", ping("wanpeer", "10.10.10.10"), False)
+    check("helper: after apply VLAN 10 still gets NTP", reach("lanhost", "udp", "10.10.10.2", 123), True)
+
+    print("--- root helper with the real kernel: a later unconfirmed change restores the CONFIRMED ruleset")
+    changed = copy.deepcopy(CFG)
+    changed["wan"]["commissioning"] = True
+    request(changed)
+    check("helper: second change, nobody confirms -> rolled-back", apply.apply_once(p, ex, confirm_seconds=1, poll=0.1), "rolled-back")
+    check("helper: ... WAN WebUI port is closed again (commissioning undone in the kernel)", reach("wanpeer", "tcp", "10.99.0.2", 8443), False)
+    check("helper: ... the confirmed firewall is still loaded", "avantp" in tables(), True)
+
+    print("--- root helper: a pending file that fails validation changes nothing")
+    bad = copy.deepcopy(CFG)
+    bad["vlans"][1]["id"] = 10
+    request(bad)
+    check("helper: invalid pending is refused", apply.apply_once(p, ex, confirm_seconds=1, poll=0.1), "error")
+    check("helper: ... the confirmed firewall is untouched", "avantp" in tables(), True)
 
 
 def reach_via(ns, dev, dst, port):

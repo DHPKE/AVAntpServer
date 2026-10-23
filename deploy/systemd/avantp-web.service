@@ -1,0 +1,28 @@
+[Unit]
+Description=AVAntpServer WebUI (unprivileged)
+After=network.target avantp-nftables.service
+
+[Service]
+User=avantp
+Group=avantp
+Environment=PYTHONPATH=/opt/avantp
+ExecStart=/usr/bin/python3 -m avantp web 0.0.0.0 8443
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+LockPersonality=yes
+ReadWritePaths=/var/lib/avantp
+
+[Install]
+WantedBy=multi-user.target

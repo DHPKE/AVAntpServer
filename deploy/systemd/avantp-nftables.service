@@ -1,0 +1,16 @@
+[Unit]
+Description=AVAntpServer firewall (keeps the WAN and LAN sides apart)
+DefaultDependencies=no
+After=local-fs.target
+Before=network-pre.target
+Wants=network-pre.target
+ConditionPathExists=/etc/avantp/nftables.nft
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/avantp/nftables.nft
+ExecStop=/usr/sbin/nft delete table inet avantp
+
+[Install]
+WantedBy=sysinit.target

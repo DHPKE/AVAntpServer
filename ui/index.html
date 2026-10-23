@@ -56,6 +56,7 @@ textarea{resize:vertical;min-height:70px}
 .sst{font-size:10px;padding:5px 10px;border-radius:4px;margin:0 16px 8px}
 .sst.ok{background:rgba(100,255,218,.1);color:var(--green)}.sst.err{background:rgba(239,68,68,.1);color:var(--red)}
 .banner{margin:12px 16px 0;padding:8px 12px;border-left:3px solid var(--yellow);background:rgba(245,158,11,.08);border-radius:0 4px 4px 0;font-size:10px}
+.banner.ok{border-left-color:var(--green);background:rgba(100,255,218,.08)}
 .banner.red{border-left-color:var(--red);background:rgba(239,68,68,.1)}
 .actions{padding:0 16px 16px;display:flex;gap:10px;align-items:center}
 .login{max-width:340px;margin:12vh auto;padding:0 16px}
@@ -89,8 +90,15 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
     <div class="pill" :class="connected?'live':'error'"><span class="dot"></span>{{ connected?'LIVE':'RECONNECTING…' }}</div>
   </header>
 
-  <div class="banner" v-if="draftDirty">Unsaved changes. Press <b>SAVE</b> on the tab you edited.</div>
-  <div class="banner" v-else-if="hasPending">Saved but <b>not applied</b> to the system yet (the apply engine is not installed in this version).</div>
+  <div class="banner red" v-if="ap.state==='pending-confirm'">Applied to the system. Confirm within <b>{{ left }} s</b> that you can still reach this page, or the previous setup is restored automatically.
+    <button class="btn" style="margin-left:12px" :disabled="busy" @click="confirm">CONFIRM</button></div>
+  <div class="banner" v-else-if="ap.state==='applying'">Applying to the system&hellip; the connection may drop for a few seconds.</div>
+  <div class="banner" v-else-if="draftDirty">Unsaved changes. Press <b>SAVE</b> on the tab you edited.</div>
+  <div class="banner" v-else-if="hasPending">Saved, but not active on the system yet.
+    <button class="btn" style="margin-left:12px" :disabled="busy" @click="applyNow">APPLY TO SYSTEM</button></div>
+  <div class="banner red" v-if="recent(ap) && ap.state==='rolled-back'">Rolled back: {{ ap.reason }}</div>
+  <div class="banner red" v-if="recent(ap) && ap.state==='error'">Apply refused: {{ ap.error }}</div>
+  <div class="banner ok" v-if="recent(ap, 60) && ap.state==='applied'">Applied and confirmed.</div>
   <div class="banner red" v-if="draft && draft.wan.commissioning">COMMISSIONING is on: SSH and this WebUI are reachable from the WAN side. Switch it off in NETWORK once a management VLAN works.</div>
 
   <!-- MONITOR -->
@@ -121,7 +129,7 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
       <div class="cr"><span class="ck">Root dispersion</span><span class="cv">{{ tr ? fmtS(tr.root_dispersion_s) : '—' }}</span></div>
     </div>
     <div class="card full">
-      <div class="lbl">VLAN clocks</div>
+      <div class="lbl">VLAN clocks<span v-if="!cfg.active" style="text-transform:none;letter-spacing:0"> &middot; showing the saved config, nothing is applied yet</span></div>
       <table v-if="cfgVlans.length"><thead><tr><th>VLAN</th><th>Name</th><th>IP address</th><th>Local time</th><th>Time zone</th><th>NTP</th><th>Timecode</th></tr></thead>
         <tbody><tr v-for="v in cfgVlans" :key="v.id">
           <td>{{ v.id }}</td><td>{{ v.name }}</td><td :class="vlanAddr(v).live ? '' : 'warnc'">{{ vlanAddr(v).text }}</td>

@@ -6,7 +6,7 @@ createApp({setup() {
   const user = ref(null), csrf = ref(''), needsSetup = ref(false)
   const lu = ref(''), lp = ref(''), loginErr = ref(''), busy = ref(false)
   const connected = ref(false), status = ref(null), skew = ref(0), now = ref(Date.now())
-  const cfg = ref({active: null, pending: null})
+  const cfg = ref({active: null, pending: null}), ap = ref({state: 'idle'})
   const draft = ref(null), up = reactive({default: '', backup: '', custom: ''}), baseline = ref('')
   const msg = ref(''), msgCls = ref('ok'), pw = reactive({old: '', new: ''})
   let timers = []
@@ -51,6 +51,7 @@ createApp({setup() {
     try {
       const s = await api('GET', '/api/status')
       status.value = s; skew.value = s.utc * 1000 - Date.now(); connected.value = true
+      ap.value = await api('GET', '/api/apply')
     } catch (_) { connected.value = false }
   }
   const tr = computed(() => status.value && status.value.chrony.tracking)
@@ -115,7 +116,7 @@ createApp({setup() {
   }
   // the address the system really has on the VLAN interface; falls back to what is configured (not applied yet)
   function vlanAddr(v) {
-    const c = cfg.value.pending || cfg.value.active || {}
+    const c = shown.value
     const nic = ifaces.value.find(i => i.name === ((c.lan || {}).iface + '.' + v.id))
     if (nic && nic.addrs.length) return {live: true, text: nic.addrs.join(', ')}
     return {live: false, text: v.mode === 'static' ? v.address + ' (not active)' : 'DHCP: no lease'}
@@ -129,10 +130,22 @@ createApp({setup() {
   // ---- config
   async function loadConfig() {
     cfg.value = await api('GET', '/api/config')
-    initDraft()
+    if (!draft.value || !draftDirty.value) initDraft()   // never throw away edits the user is still typing
   }
-  const cfgVlans = computed(() => ((cfg.value.pending || cfg.value.active || {}).vlans) || [])
-  const hasPending = computed(() => !!cfg.value.pending && JSON.stringify(cfg.value.pending) !== JSON.stringify(cfg.value.active))
+  const shown = computed(() => cfg.value.active || cfg.value.pending || {})   // what the system runs; before the first apply, what is saved
+  const cfgVlans = computed(() => shown.value.vlans || [])
+  const canon = o => JSON.stringify(o, (k, v) => v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort()) : v)
+  const hasPending = computed(() => !!cfg.value.pending && canon(cfg.value.pending) !== canon(cfg.value.active))
+  const left = computed(() => Math.max(0, Math.ceil((ap.value.deadline || 0) - utcMs.value / 1000)))
+  const recent = (a, secs = 600) => a.time && utcMs.value / 1000 - a.time < secs
+  async function applyNow() {
+    busy.value = true
+    try { await api('POST', '/api/apply', {}); ap.value = {state: 'applying'} } catch (e) { msg.value = e.message; msgCls.value = 'err' } finally { busy.value = false }
+  }
+  async function confirm() {
+    busy.value = true
+    try { await api('POST', '/api/confirm', {}); await poll(); await loadConfig() } catch (e) { msg.value = e.message; msgCls.value = 'err' } finally { busy.value = false }
+  }
   function blank() {
     const n = physical.value.map(i => i.name)
     const wan = (physical.value.find(i => i.state === 'up' && i.addrs.length) || {}).name || n[0] || ''
@@ -180,7 +193,7 @@ createApp({setup() {
       const d = await api('PUT', '/api/config', payload())
       cfg.value.pending = d.pending
       initDraft()
-      msg.value = 'Saved. Not applied to the system yet.'; msgCls.value = 'ok'
+      msg.value = 'Saved. Press APPLY TO SYSTEM at the top to activate it.'; msgCls.value = 'ok'
     } catch (e) { msg.value = e.message; msgCls.value = 'err' } finally { busy.value = false }
   }
   async function changePw() {
@@ -191,10 +204,11 @@ createApp({setup() {
     } catch (e) { msg.value = e.message; msgCls.value = 'err' } finally { busy.value = false }
   }
   watch(tab, () => { msg.value = '' })
+  watch(() => ap.value.state, (n, o) => { if (o && n !== o && ['applied', 'rolled-back', 'error'].includes(n)) loadConfig().catch(() => {}) })
 
   onMounted(start)
   onUnmounted(stop)
   return {tabs, tab, user, needsSetup, lu, lp, loginErr, busy, connected, doLogin, doLogout, draft, up, msg, msgCls, pw,
-    tr, chronyRunning, sources, ifaces, ifaceNames, syncCls, syncTxt, syncIcon, syncName, fmtS, off, offCls, utcNow,
+    ap, left, recent, applyNow, confirm, cfg, shown, tr, chronyRunning, sources, ifaces, ifaceNames, syncCls, syncTxt, syncIcon, syncName, fmtS, off, offCls, utcNow,
     tzLabel, tzGroups, localTime, tcText, vlanAddr, cfgVlans, hasPending, draftDirty, wanDns, addVlan, save, changePw}
 }}).mount('#app')

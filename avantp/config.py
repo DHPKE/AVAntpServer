@@ -107,7 +107,7 @@ def validate(cfg):
           "at least one VLAN must have mgmt=true (WebUI/SSH access), or enable wan.commissioning")
     web = cfg.setdefault("webui", {})
     web.setdefault("port", 8443)
-    _need(isinstance(web["port"], int) and 1024 <= web["port"] <= 65535, "webui.port invalid")
+    _need(web["port"] == 8443, "webui.port is fixed at 8443")
     cfg["wan"], cfg["lan"] = wan, lan
     return cfg
 

@@ -16,7 +16,8 @@ def chrony(cfg):
         "makestep 1.0 3\n"
         "rtcsync\n"
         "leapsectz right/UTC\n"
-        "cmdport 0\n"
+        "bindcmdaddress 127.0.0.1\n"
+        "bindcmdaddress ::1\n"
         "ratelimit interval 1 burst 16 leak 2\n"
     )
     serving = [v for v in cfg["vlans"] if v["ntp"]]

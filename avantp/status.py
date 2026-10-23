@@ -35,9 +35,9 @@ def parse_sources(csv):
 
 
 def chrony():
-    t = parse_tracking(_run(["chronyc", "-c", "tracking"]))
+    t = parse_tracking(_run(["chronyc", "-h", "127.0.0.1", "-c", "tracking"]))
     return {"running": t is not None, "tracking": t,
-            "sources": parse_sources(_run(["chronyc", "-c", "sources"])) if t else []}
+            "sources": parse_sources(_run(["chronyc", "-h", "127.0.0.1", "-c", "sources"])) if t else []}
 
 
 def interfaces():

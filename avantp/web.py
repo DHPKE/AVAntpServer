@@ -1,7 +1,8 @@
 """WebUI backend: stdlib only. Serves ui/, a JSON API behind a login, optionally over TLS.
 
 Config flow: the browser edits a config, PUT /api/config validates it and stores it as pending.json.
-Applying pending.json to the system is done by a separate root helper (not this unprivileged process).
+POST /api/apply asks the separate root helper (avantp apply) to put it on the system; the helper reports in status.json
+and rolls back by itself unless POST /api/confirm arrives in time. This process never needs root.
 """
 import copy
 import http.server
@@ -23,22 +24,27 @@ MAX_BODY = 256 * 1024
 
 
 class App:
-    def __init__(self, data_dir, tls):
+    def __init__(self, data_dir, tls, etc_dir=None, run_dir=None):
         self.dir = data_dir
+        self.etc = etc_dir or data_dir   # root-owned: the active config
+        self.run = run_dir or data_dir   # root-owned: the helper's status
         self.tls = tls
         self.users = auth.Users(os.path.join(data_dir, "users.json"))
         self.sessions = auth.Sessions()
         self.lock = threading.Lock()
 
-    def _read(self, name):
+    def _read(self, name, base=None):
         try:
-            with open(os.path.join(self.dir, name)) as f:
+            with open(os.path.join(base or self.dir, name)) as f:
                 return json.load(f)
         except FileNotFoundError:
             return None
 
     def active(self):
-        return self._read("config.json")
+        return self._read("config.json", self.etc)
+
+    def apply_status(self):
+        return self._read("status.json", self.run) or {"state": "idle"}
 
     def pending(self):
         return self._read("pending.json")
@@ -114,6 +120,8 @@ def make_handler(app):
                 return self.send(200, status.snapshot())
             if path == "/api/config":
                 return self.send(200, {"active": app.active(), "pending": app.pending()})
+            if path == "/api/apply":
+                return self.send(200, app.apply_status())
             self.err(404, "not found")
 
         def do_POST(self):
@@ -164,13 +172,28 @@ def make_handler(app):
                 with app.lock:
                     app.save_pending(clean)
                 return self.send(200, {"pending": clean})
+            if post and path == "/api/apply":
+                pend, st = app.pending(), app.apply_status().get("state")
+                if st in ("applying", "pending-confirm"):
+                    return self.err(409, "an apply is already running")
+                if not pend or pend == app.active():
+                    return self.err(409, "nothing to apply: there are no saved changes")
+                with app.lock:
+                    open(os.path.join(app.dir, "apply.request"), "w").close()
+                return self.send(202, {"state": "queued"})
+            if post and path == "/api/confirm":
+                if app.apply_status().get("state") != "pending-confirm":
+                    return self.err(409, "nothing is waiting for confirmation")
+                with app.lock:
+                    open(os.path.join(app.dir, "confirm"), "w").close()
+                return self.send(200, {"ok": True})
             self.err(404, "not found")
 
     return H
 
 
-def serve(data_dir, host, port, certfile=None, keyfile=None):
-    app = App(data_dir, tls=bool(certfile))
+def serve(data_dir, host, port, certfile=None, keyfile=None, etc_dir=None, run_dir=None):
+    app = App(data_dir, tls=bool(certfile), etc_dir=etc_dir, run_dir=run_dir)
     srv = http.server.ThreadingHTTPServer((host, port), make_handler(app))
     if certfile:
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)

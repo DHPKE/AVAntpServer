@@ -1,0 +1,9 @@
+[Unit]
+Description=Apply the saved AVAntpServer config when the WebUI asks for it
+
+[Path]
+PathExists=/var/lib/avantp/apply.request
+Unit=avantp-apply.service
+
+[Install]
+WantedBy=multi-user.target

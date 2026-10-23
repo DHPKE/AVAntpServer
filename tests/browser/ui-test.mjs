@@ -1,6 +1,8 @@
 // Real-browser test: drives headless Chrome over CDP (Node 22, no dependencies).
 // Needs: a server started with fake chronyc/ip on PATH and AVANTP_ALLOW_HTTP=1 on 127.0.0.1:8765, user admin / "correct horse battery".
-//   AVANTP_DIR=<dir with users.json> PATH=tests/browser/fakebin:$PATH AVANTP_ALLOW_HTTP=1 python3 -m avantp web 127.0.0.1 8765
+//   export AVANTP_DIR=<dir with users.json> AVANTP_CONFIRM_SECONDS=4 PATH=tests/browser/fakebin:$PATH
+//   python3 -m avantp apply --fake --watch &        # development helper: records instead of touching the system
+//   AVANTP_ALLOW_HTTP=1 python3 -m avantp web 127.0.0.1 8765
 //   node tests/browser/ui-test.mjs <screenshot-dir>
 import { spawn } from 'node:child_process'
 import { writeFileSync, mkdtempSync } from 'node:fs'
@@ -78,8 +80,30 @@ await ev(`(()=>{const r=document.querySelectorAll('tbody tr');
 await sleep(300)
 await shot('4-vlans')
 await click('.actions .btn'); await sleep(900)
-t = await text(); check('save OK message', t.includes('Saved. Not applied'), t.slice(-200))
-check('saved-not-applied banner', t.includes('not applied'))
+t = await text(); check('save OK message', t.includes('Saved. Press APPLY TO SYSTEM'), t.slice(-200))
+check('saved-but-not-active banner with APPLY button', t.includes('not active on the system yet') && t.includes('APPLY TO SYSTEM'))
+
+// apply -> confirm window -> confirm
+await ev(`[...document.querySelectorAll('.banner .btn')].find(b=>b.textContent.includes('APPLY TO SYSTEM')).click()`)
+let seen = false
+for (let i = 0; i < 20 && !seen; i++) { await sleep(400); seen = (await text()).includes('Confirm within') }
+check('after APPLY the confirm countdown banner appears', seen, (await text()).slice(0, 300))
+await ev(`[...document.querySelectorAll('.banner .btn')].find(b=>b.textContent.includes('CONFIRM')).click()`)
+seen = false
+for (let i = 0; i < 20 && !seen; i++) { await sleep(400); seen = (await text()).includes('Applied and confirmed') }
+check('after CONFIRM the change is shown as applied', seen, (await text()).slice(0, 300))
+let gone = false
+for (let i = 0; i < 20 && !gone; i++) { await sleep(300); gone = await ev(`![...document.querySelectorAll('.banner .btn')].some(b=>b.textContent.includes('APPLY'))`) }
+check('apply banner gone once active == saved', gone, (await text()).slice(0, 200))
+
+// a second change that nobody confirms must roll itself back
+await tab('VLANS'); await sleep(300)
+await ev(`(()=>{const e=document.querySelectorAll('tbody tr')[1].querySelectorAll('input')[1];e.value='renamed';e.dispatchEvent(new Event('input'))})()`)
+await click('.actions .btn'); await sleep(900)
+await ev(`[...document.querySelectorAll('.banner .btn')].find(b=>b.textContent.includes('APPLY TO SYSTEM')).click()`)
+seen = false
+for (let i = 0; i < 40 && !seen; i++) { await sleep(400); seen = (await text()).includes('Rolled back') }
+check('unconfirmed change is rolled back and says why', seen && (await text()).includes('not confirmed within'), (await text()).slice(0, 300))
 
 // bad config is refused by the server and shown
 await ev(`(()=>{const r=document.querySelectorAll('tbody tr');const e=r[1].querySelectorAll('input')[0];e.value=10;e.dispatchEvent(new Event('input'))})()`)
