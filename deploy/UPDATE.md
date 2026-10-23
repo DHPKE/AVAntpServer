@@ -45,7 +45,6 @@ Do not start an update while an APPLY is waiting for confirmation.
 |---|---|---|
 | `Could not reach GitHub/Debian. Is Update mode ON?` | Update mode is off or expired | Enter Update mode again, run the command again. Nothing was changed. |
 | `sudo: a password is required` | node asks for its own password | Type node's password. |
-| `git pull` says it cannot fast-forward / local changes | The clone was edited by hand | `cd ~/AVAntpServer-src && git status`, then `git fetch origin && git reset --hard origin/main`, run the update again. |
 | New version misbehaves | | Go back, see below. |
 | WebUI unreachable after the update | | `ssh node@10.1.10.1`, then `sudo systemctl status avantp-web`, `sudo journalctl -u avantp-web -n 40`. |
 
@@ -67,7 +66,7 @@ git log --oneline -10                  # pick the hash of the version you want
 git checkout <hash>
 sudo ./deploy/install.sh
 ```
-Before the next normal update return to the newest code first: `git checkout main`.
+The next normal update (button or script) returns to the newest version by itself.
 
 ## Where things are
 

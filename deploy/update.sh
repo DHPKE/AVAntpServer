@@ -1,7 +1,7 @@
 #!/bin/sh
 # Update the box from GitHub and install:   sudo /opt/avantp/deploy/update.sh
 # Needs Update mode ON (WebUI -> System -> Update mode): the firewall otherwise blocks the box's own downloads.
-# First run: installs git, clones the repository into ~/AVAntpServer-src. Later runs: git pull. Then install.sh.
+# First run: installs git, clones the repository into ~/AVAntpServer-src. Later runs: fetch + reset to main. Then install.sh.
 set -eu
 REPO=${AVANTP_REPO:-https://github.com/DHPKE/AVAntpServer.git}
 [ "$(id -u)" -eq 0 ] || { echo "run it with sudo" >&2; exit 1; }
@@ -18,8 +18,12 @@ if ! command -v git >/dev/null 2>&1; then
 fi
 
 if [ -d "$SRC/.git" ]; then
-  before=$(runuser -u "$OWNER" -- git -C "$SRC" rev-parse --short HEAD)
-  runuser -u "$OWNER" -- git -C "$SRC" pull --ff-only || hint
+  # The clone is only a mirror of GitHub's main: never depend on its previous state (an empty repository left by an
+  # earlier failed clone, local edits, a detached HEAD from a rollback, diverged history). Fetch and reset every time.
+  before=$(runuser -u "$OWNER" -- git -C "$SRC" rev-parse --short HEAD 2>/dev/null || echo none)
+  runuser -u "$OWNER" -- git -C "$SRC" remote set-url origin "$REPO" 2>/dev/null || true
+  runuser -u "$OWNER" -- git -C "$SRC" fetch --depth 50 origin main || hint
+  runuser -u "$OWNER" -- git -C "$SRC" checkout -q -f -B main FETCH_HEAD || { echo "could not switch to the downloaded version" >&2; exit 1; }
   after=$(runuser -u "$OWNER" -- git -C "$SRC" rev-parse --short HEAD)
   echo "code: $before -> $after"
 else
