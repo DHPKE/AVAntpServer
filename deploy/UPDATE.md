@@ -49,6 +49,16 @@ Do not start an update while an APPLY is waiting for confirmation.
 | New version misbehaves | | Go back, see below. |
 | WebUI unreachable after the update | | `ssh node@10.1.10.1`, then `sudo systemctl status avantp-web`, `sudo journalctl -u avantp-web -n 40`. |
 
+## Private repository
+
+If the repository `DHPKE/AVAntpServer` is private, the box (which has no GitHub login) gets "GitHub answered 404" from
+the Software card and a "repository not found" from `update.sh`. Two ways to give it access:
+
+1. **Make the repository public** (GitHub -> Settings -> Danger zone -> Change visibility). Nothing else to do.
+2. **Read-only deploy key** (recommended for a private repository): a key pair created on the box whose public half is
+   added to the repository as a *deploy key without write access*. It can read this one repository and nothing else.
+   The box then clones over SSH on port 443 (`ssh.github.com:443`), which the update window allows.
+
 ## Going back to an earlier version
 
 ```

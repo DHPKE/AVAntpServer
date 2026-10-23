@@ -26,6 +26,8 @@ API = f"https://api.github.com/repos/{REPO}"
 CHECK_WINDOW, UPDATE_WINDOW = 120, 900         # seconds web access may stay open (the kernel closes it by itself)
 UPDATE_SCRIPT = "/opt/avantp/deploy/update.sh"
 HINT = "Could not reach GitHub. Check that the box has internet access on its WAN port."
+PRIVATE_HINT = ("GitHub answered %d: the repository %s is private (or does not exist), so the box cannot read it without credentials. "
+                "Make it public, or give the box a read-only deploy key (see deploy/UPDATE.md, 'Private repository').")
 
 
 def github(path, timeout=10):
@@ -145,6 +147,11 @@ def handle(paths, ex, fetch=github, runner=run_update_script, now=time.time):
         _status(paths, state="checking" if word == "check" else "updating", step="Asking GitHub for the latest version")
         try:
             result = compare(inst, fetch)
+        except urllib.error.HTTPError as e:                  # GitHub answered, so the connection works: say what it said
+            log.error("GitHub answered %s", e.code)
+            msg = PRIVATE_HINT % (e.code, REPO) if e.code in (401, 403, 404) else f"GitHub answered HTTP {e.code}; try again later."
+            _status(paths, state="error", error=msg)
+            return "error"
         except Exception as e:
             log.error("cannot reach GitHub: %s", e)
             _status(paths, state="error", error=f"{HINT} ({str(e)[:120]})")

@@ -107,6 +107,21 @@ class HandleTest(unittest.TestCase):
         self.assertIn("Could not reach GitHub", self.status()["error"])
         self.assertEqual(self.windows(), [True, False])
 
+    def test_a_private_repository_is_explained_not_called_a_network_problem(self):
+        for code in (404, 401, 403):
+            self.request("check")
+            err = urllib.error.HTTPError("u", code, "x", {}, None)
+            self.assertEqual(software.handle(self.p, self.ex, fetch=gh(fail=err)), "error")
+            msg = self.status()["error"]
+            self.assertIn(f"GitHub answered {code}", msg)
+            self.assertIn("private", msg)
+            self.assertIn("deploy key", msg)
+            self.assertNotIn("Could not reach", msg)
+            self.assertEqual(self.windows()[-2:], [True, False])                          # the window was still closed
+        self.request("check")
+        software.handle(self.p, self.ex, fetch=gh(fail=urllib.error.HTTPError("u", 503, "x", {}, None)))
+        self.assertIn("HTTP 503", self.status()["error"])
+
     def test_update_when_already_current_changes_nothing(self):
         self.set_installed("b47ea20")
         self.request("update")
