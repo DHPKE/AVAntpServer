@@ -107,7 +107,9 @@ class Sender:
             mtime = os.stat(self.cfg_path).st_mtime
             if mtime == self.cfg_mtime:
                 return
-            cfg = config.load(self.cfg_path)
+            # lenient: this configuration is already active; a policy check that is newer than it must not stop every VLAN.
+            # The per-VLAN run-time checks below (subnet, kernel route, firewall) refuse a bad receiver on its own.
+            cfg = config.load(self.cfg_path, strict=False)
         except (OSError, ValueError, config.ConfigError) as e:
             if self.cfg_mtime is None:
                 self.cfg_mtime = -1

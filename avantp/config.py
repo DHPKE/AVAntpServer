@@ -41,8 +41,11 @@ def _net(cidr, where):
         raise ConfigError(f"{where}: invalid address {cidr!r} (example: 10.1.1.24/24)")
 
 
-def validate(cfg):
-    """Return a normalised copy of cfg or raise ConfigError."""
+def validate(cfg, strict=True):
+    """Return a normalised copy of cfg or raise ConfigError.
+
+    strict=False is for loading a configuration that is ALREADY running (the timecode sender): newer, stricter checks of
+    network policy must not invalidate it as a whole. The sender enforces the same rules per VLAN at run time instead."""
     _need(isinstance(cfg, dict), "config must be an object")
     wan = cfg.get("wan", {})
     lan = cfg.get("lan", {})
@@ -127,7 +130,7 @@ def validate(cfg):
                 raise ConfigError(f"vlan {vid}: Art-Net destination {dest!r} is not an IPv4 address (or 'broadcast')")
             _need(ip.version == 4 and not (ip.is_multicast or ip.is_loopback or ip.is_unspecified or ip.is_link_local
                                            or ip.is_reserved), f"vlan {vid}: Art-Net destination {dest} must be a normal unicast IPv4 address")
-            if wan_net and ip in wan_net.network:
+            if strict and wan_net and ip in wan_net.network:
                 raise ConfigError(f"vlan {vid}: Art-Net destination {dest} is on the WAN network {wan_net.network}: the VLANs "
                                   f"never send to the WAN side. Choose a receiver on this VLAN.")
             if v["mode"] == "static":              # the LAN side has no gateway: the receiver has to be on this VLAN
@@ -145,9 +148,9 @@ def validate(cfg):
     return cfg
 
 
-def load(path):
+def load(path, strict=True):
     with open(path) as f:
-        return validate(json.load(f))
+        return validate(json.load(f), strict=strict)
 
 
 def dump(cfg):

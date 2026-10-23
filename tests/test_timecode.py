@@ -216,6 +216,10 @@ class UnicastTest(unittest.TestCase):
         self.assertEqual({addr for addr, _ in self.sent}, {("10.3.5.5", 6454)})
 
 
+def src_dev(src):
+    return {"10.20.0.2": "enp3s0.20", "10.3.10.1": "enp3s0.30"}.get(src)
+
+
 class RouteCheckTest(UnicastTest):
     """The kernel decides the interface: an address inside the VLAN's /19 may still be routed to the WAN's /24."""
 
@@ -240,6 +244,30 @@ class RouteCheckTest(UnicastTest):
         self.assertEqual(a["state"], "error")
         self.assertIn("on the WAN side (enp4s0)", a["error"])
         self.assertIn("Choose a receiver on this VLAN (10.3.0.0/19)", a["error"])
+
+    def test_an_already_active_config_with_a_bad_receiver_still_runs_the_other_vlans(self):
+        """Regression: a stricter save-time rule must not turn an active configuration into 'no usable configuration'."""
+        c = copy.deepcopy(BASE)
+        c["wan"] = {"iface": "enp4s0", "mode": "static", "address": "10.3.1.24/24", "gateway": "10.3.1.254"}      # inside VLAN 30's /19
+        c["vlans"][1]["timecode"] = {"artnet": True, "mtc_rtp": False, "fps": 25, "artnet_dest": "broadcast"}          # VLAN 20 fine
+        c["vlans"][2]["timecode"] = {"artnet": True, "mtc_rtp": False, "fps": 25, "artnet_dest": "10.3.5.5"}             # VLAN 30 fine
+        good = config.dump(config.validate(c))
+        good["vlans"][2]["timecode"]["artnet_dest"] = "10.3.1.50"                                                        # now on the WAN network
+        with self.assertRaises(config.ConfigError):
+            config.validate(copy.deepcopy(good))                                    # saving it is refused ...
+        json.dump(good, open(self.cfg, "w"))                                        # ... but it is already the active config
+        s = self.sender2({"enp3s0.20": ("10.20.0.2", "10.20.0.255", "10.20.0.0/24"),
+                          "enp3s0.30": ("10.3.10.1", "10.3.31.255", "10.3.0.0/19")}, lambda d, src: "enp4s0" if d.startswith("10.3.1.") else src_dev(src))
+        end = time.time() + 0.4
+        while time.time() < end:
+            s.tick()
+            time.sleep(0.004)
+        s.write_status(force=True)
+        st = {v["id"]: v["artnet"] for v in json.load(open(os.path.join(self.dir, "s.json")))["vlans"]}
+        self.assertEqual(st[20]["state"], "sending")                                  # the other VLAN keeps its timecode
+        self.assertEqual(st[30]["state"], "error")                                    # only the bad receiver is refused
+        self.assertIn("on the WAN side", st[30]["error"])
+        self.assertEqual({a for a, _ in self.sent}, {("10.20.0.255", 6454)})
 
     def test_routing_through_the_vlan_is_fine_and_an_unknown_route_does_not_block(self):
         self.write("10.20.0.50")
