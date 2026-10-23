@@ -136,5 +136,33 @@ class ApplyTest(unittest.TestCase):
         self.assertEqual(os.readlink(self.f("etc/resolv.conf")), "../run/systemd/resolve/stub-resolv.conf")
 
 
+class TakeoverTest(unittest.TestCase):
+    def test_takeover_hands_dns_to_resolved_and_disables_ifupdown(self):
+        root = tempfile.mkdtemp()
+        os.makedirs(os.path.join(root, "etc"))
+        open(os.path.join(root, "etc/resolv.conf"), "w").write("nameserver 8.8.8.8\n")
+        ex = apply.SystemExecutor(apply.Paths(root))
+        ran = []
+        ex.sh = lambda *argv, check=True, timeout=60: ran.append(argv)
+        ex.takeover(config.validate(copy.deepcopy(BASE)))
+        self.assertIn(("systemctl", "disable", "networking"), ran)
+        self.assertIn(("ifdown", "--force", "enp4s0"), ran)
+        self.assertIn(("systemctl", "enable", "--now", "systemd-resolved"), ran)
+        self.assertEqual(os.readlink(os.path.join(root, "etc/resolv.conf")), "../run/systemd/resolve/stub-resolv.conf")
+        # ifupdown goes away only AFTER nothing else can fail halfway: networkd is enabled last
+        self.assertEqual(ran[-1], ("systemctl", "enable", "systemd-networkd"))
+
+    def test_rollback_of_takeover_gives_the_network_back_to_ifupdown(self):
+        ex = apply.SystemExecutor(apply.Paths(tempfile.mkdtemp()))
+        ran = []
+        ex.sh = lambda *argv, check=True, timeout=60: ran.append(argv)
+        ex.rollback(True, {"wan": {"iface": "enp4s0"}})
+        flat = [" ".join(a) for a in ran]
+        self.assertIn("systemctl disable --now systemd-networkd systemd-resolved", flat)
+        self.assertIn("systemctl enable networking", flat)
+        self.assertIn("ip addr flush dev enp4s0", flat)
+        self.assertIn("systemctl restart networking", flat)
+
+
 if __name__ == "__main__":
     unittest.main()

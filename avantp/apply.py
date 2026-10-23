@@ -240,7 +240,12 @@ class SystemExecutor:
     def takeover(self, cfg):
         self.sh("systemctl", "disable", "networking")
         self.sh("ifdown", "--force", cfg["wan"]["iface"], check=False)   # stops dhcpcd; networkd gets the lease next
-        self.sh("systemctl", "enable", "systemd-networkd", "systemd-resolved")
+        self.sh("systemctl", "enable", "--now", "systemd-resolved")
+        link = self.p.under("etc/resolv.conf")          # from now on resolved (fed by networkd's DHCP) owns DNS
+        os.makedirs(os.path.dirname(link), exist_ok=True)
+        os.symlink("../run/systemd/resolve/stub-resolv.conf", link + ".avantp")
+        os.replace(link + ".avantp", link)
+        self.sh("systemctl", "enable", "systemd-networkd")
 
     def activate(self, cfg, removed, takeover):
         self.sh("sysctl", "-p", self.p.under("etc/sysctl.d/90-avantp.conf"))
@@ -263,7 +268,7 @@ class SystemExecutor:
         else:
             self.sh("nft", "delete", "table", "inet", "avantp", check=False)
         if takeover:
-            self.sh("systemctl", "disable", "--now", "systemd-networkd", check=False)
+            self.sh("systemctl", "disable", "--now", "systemd-networkd", "systemd-resolved", check=False)
             self.sh("systemctl", "enable", "networking", check=False)
             self.sh("ip", "addr", "flush", "dev", (old_cfg or {}).get("wan", {}).get("iface", "enp4s0"), check=False)
             self.sh("systemctl", "restart", "networking", check=False)

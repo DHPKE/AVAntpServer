@@ -13,9 +13,30 @@ SRC=$(cd "$(dirname "$0")/.." && pwd)
 SD=""; command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ] && SD=1   # empty in containers
 DATA=/var/lib/avantp
 
+# DNS must keep working while ifupdown still runs the network. Installing systemd-resolved swaps /etc/resolv.conf for a
+# stub without upstream servers until networkd takes over, so: remember the working file, put it back afterwards, and
+# repair it first if an earlier run already broke it (the apply step hands DNS to resolved later, with rollback).
+KEEP=""
+if [ -f /etc/resolv.conf ] && [ ! -L /etc/resolv.conf ]; then KEEP=$(mktemp); cp /etc/resolv.conf "$KEEP"; fi
+
+keep_dns() {
+  [ -n "$SD" ] && [ -L /etc/resolv.conf ] && systemctl is-enabled networking >/dev/null 2>&1 || return 0
+  if [ -z "$KEEP" ] || [ ! -s "$KEEP" ]; then      # take the servers from the DHCP lease, else the gateway
+    KEEP=$(mktemp)
+    dns=$(dhcpcd -U "$(ip route show default | awk '{print $5; exit}')" 2>/dev/null | sed -n "s/^domain_name_servers='\(.*\)'/\1/p")
+    [ -n "$dns" ] || dns=$(ip route show default | awk '{print $3; exit}')
+    for ns in $dns; do echo "nameserver $ns"; done > "$KEEP"
+  fi
+  rm -f /etc/resolv.conf && cp "$KEEP" /etc/resolv.conf && chmod 644 /etc/resolv.conf
+  systemctl disable --now systemd-resolved >/dev/null 2>&1 || true
+  echo "DNS kept on: $(tr '\n' ' ' < /etc/resolv.conf)"
+}
+
 export DEBIAN_FRONTEND=noninteractive
+keep_dns
 apt-get update -qq
 apt-get install -y -qq chrony nftables systemd-resolved python3 rfkill openssl iproute2
+keep_dns
 
 # ---- user, directories, code
 id avantp >/dev/null 2>&1 || useradd --system --home-dir "$DATA" --shell /usr/sbin/nologin avantp
