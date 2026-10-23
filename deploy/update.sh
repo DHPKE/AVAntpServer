@@ -1,13 +1,30 @@
 #!/bin/sh
-# Update the box from GitHub, then install:  sudo ./deploy/update.sh      (run inside the git clone)
-# One-time setup:  sudo apt-get install -y git && git clone https://github.com/DHPKE/AVAntpServer ~/AVAntpServer-src
+# Update the box from GitHub and install:   sudo /opt/avantp/deploy/update.sh
+# Needs Update mode ON (WebUI -> System -> Update mode): the firewall otherwise blocks the box's own downloads.
+# First run: installs git, clones the repository into ~/AVAntpServer-src. Later runs: git pull. Then install.sh.
 set -eu
-cd "$(dirname "$0")/.."
-[ -d .git ] || { echo "this folder is not a git clone, so there is nothing to pull (see the setup line above)" >&2; exit 1; }
-[ "$(id -u)" -eq 0 ] || { echo "run as root (sudo)" >&2; exit 1; }
-OWNER=$(stat -c %U .git)                                   # pull as the clone's owner, not as root
-before=$(runuser -u "$OWNER" -- git rev-parse --short HEAD)
-runuser -u "$OWNER" -- git pull --ff-only
-after=$(runuser -u "$OWNER" -- git rev-parse --short HEAD)
-echo "code: $before -> $after"
-exec ./deploy/install.sh
+REPO=${AVANTP_REPO:-https://github.com/DHPKE/AVAntpServer.git}
+[ "$(id -u)" -eq 0 ] || { echo "run it with sudo" >&2; exit 1; }
+OWNER=${SUDO_USER:-node}
+HOME_DIR=$(getent passwd "$OWNER" | cut -d: -f6)
+[ -n "$HOME_DIR" ] || { echo "unknown user $OWNER" >&2; exit 1; }
+SRC="$HOME_DIR/AVAntpServer-src"
+hint() { echo >&2; echo "Could not reach GitHub/Debian. Is Update mode ON? (WebUI -> System -> ENTER UPDATE MODE, it lasts 15 minutes)" >&2; exit 2; }
+
+if ! command -v git >/dev/null 2>&1; then
+  echo "git is not installed: installing it..."
+  apt-get update -qq || true                       # a failed index refresh is tolerated; the install below decides
+  apt-get install -y -qq git || hint
+fi
+
+if [ -d "$SRC/.git" ]; then
+  before=$(runuser -u "$OWNER" -- git -C "$SRC" rev-parse --short HEAD)
+  runuser -u "$OWNER" -- git -C "$SRC" pull --ff-only || hint
+  after=$(runuser -u "$OWNER" -- git -C "$SRC" rev-parse --short HEAD)
+  echo "code: $before -> $after"
+else
+  echo "first run: cloning $REPO into $SRC"
+  runuser -u "$OWNER" -- git clone --depth 50 "$REPO" "$SRC" || hint
+  echo "code: $(runuser -u "$OWNER" -- git -C "$SRC" rev-parse --short HEAD)"
+fi
+exec "$SRC/deploy/install.sh"

@@ -43,7 +43,7 @@ id avantp >/dev/null 2>&1 || useradd --system --home-dir "$DATA" --shell /usr/sb
 install -d -o avantp -g avantp -m 750 "$DATA"
 install -d -m 755 /etc/avantp
 rm -rf /opt/avantp && mkdir /opt/avantp
-cp -r "$SRC/avantp" "$SRC/ui" /opt/avantp/
+cp -r "$SRC/avantp" "$SRC/ui" "$SRC/deploy" /opt/avantp/            # deploy/ too, so /opt/avantp/deploy/update.sh always exists
 # which code is this? git hash when run from a clone, else the VERSION file that came with a copy
 if [ -d "$SRC/.git" ] && command -v git >/dev/null 2>&1; then
   V=$(git -c safe.directory="$SRC" -C "$SRC" describe --always --dirty 2>/dev/null) || V=""
