@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AVAntp Server</title>
+<link rel="icon" href="data:,">
+<style>
+:root{--bg:#0d1b2a;--surface:#112240;--border:#1e3a5f;--text:#ccd6f6;--muted:#4a6a8a;--green:#64ffda;--yellow:#f59e0b;--red:#ef4444;--blue:#60a5fa}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--text)}
+body{font-family:'SF Mono','Fira Code',Consolas,monospace;font-size:12px}
+[v-cloak]{display:none!important}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:10px 20px;border-bottom:1px solid var(--border);background:var(--surface);position:sticky;top:0;z-index:10}
+header h1{font-size:13px;font-weight:700;letter-spacing:.08em}
+.sub{font-size:10px;color:var(--muted);display:flex;gap:14px;align-items:center}.sub b{color:var(--text)}
+.pill{display:flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;border:1px solid;font-size:10px;font-weight:700;letter-spacing:.1em;white-space:nowrap}
+.live{border-color:var(--green);color:var(--green)}.error{border-color:var(--red);color:var(--red)}
+.dot{width:6px;height:6px;border-radius:50%;background:currentColor}.live .dot{animation:blink 1.2s ease-in-out infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+.tab-nav{display:flex;gap:1px;background:var(--border);border-radius:8px;padding:1px}
+.tab-btn{padding:4px 14px;border-radius:7px;border:none;background:transparent;color:var(--muted);cursor:pointer;font-size:10px;font-weight:700;letter-spacing:.1em;font-family:inherit}
+.tab-btn.active{background:var(--surface);color:var(--text)}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;padding:16px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;overflow:auto}
+.full{grid-column:1/-1}
+.lbl{font-size:9px;font-weight:700;letter-spacing:.14em;color:var(--muted);text-transform:uppercase;margin-bottom:10px}
+.ring{width:84px;height:84px;border-radius:50%;border:3px solid;display:flex;align-items:center;justify-content:center;font-size:26px;margin:0 auto 10px}
+.ring.ok{border-color:var(--green);color:var(--green);box-shadow:0 0 18px rgba(100,255,218,.2)}
+.ring.bad{border-color:var(--red);color:var(--red)}.ring.warn{border-color:var(--yellow);color:var(--yellow)}
+.sname{text-align:center;font-size:16px;font-weight:700;letter-spacing:.1em}
+.smeta{text-align:center;font-size:10px;color:var(--muted);margin-top:3px}
+.big{font-size:34px;font-weight:700;letter-spacing:-.02em;line-height:1}.bigunit{font-size:15px;font-weight:400;margin-left:3px}
+.bigsub{font-size:10px;color:var(--muted);margin-top:5px}
+.good{color:var(--green)}.warnc{color:var(--yellow)}.badc{color:var(--red)}
+.cr{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px}.ck{color:var(--muted);font-size:10px}.cv{font-size:10px;font-weight:600}
+.div{margin:10px 0;border-top:1px solid var(--border)}
+table{width:100%;border-collapse:collapse}
+th{font-size:9px;font-weight:700;letter-spacing:.12em;color:var(--muted);text-transform:uppercase;text-align:left;padding:4px 6px 6px}
+td{padding:5px 6px;border-top:1px solid var(--border);font-size:11px;white-space:nowrap}
+.nicpill{display:inline-flex;align-items:center;gap:7px;padding:5px 13px;border:1px solid var(--border);border-radius:20px;font-size:10px;font-weight:600;margin:0 8px 8px 0}
+.nicpill.up{border-color:var(--green);color:var(--green)}.nicpill.down{opacity:.45;color:var(--muted)}
+.sform{padding:16px;display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.sfull{grid-column:1/-1}
+.sf{margin-bottom:10px}.sf:last-child{margin-bottom:0}
+.slbl{font-size:9px;font-weight:700;letter-spacing:.14em;color:var(--muted);text-transform:uppercase;display:block;margin-bottom:4px}
+input[type=text],input[type=password],input[type=number],select,textarea{width:100%;background:#091525;border:1px solid var(--border);border-radius:5px;color:var(--text);padding:5px 8px;font-size:11px;font-family:inherit;outline:none}
+input:focus,select:focus,textarea:focus{border-color:var(--blue)}
+td input[type=text],td input[type=number],td select{min-width:70px;padding:3px 6px}
+textarea{resize:vertical;min-height:70px}
+.sradio{display:flex;gap:12px;padding:4px 0}.sradio label,.chk{display:flex;align-items:center;gap:5px;cursor:pointer;font-size:10px}
+.btn{padding:7px 22px;background:var(--green);color:#0d1b2a;border:none;border-radius:6px;font-weight:700;font-size:11px;letter-spacing:.1em;cursor:pointer;font-family:inherit}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn.ghost{background:transparent;color:var(--text);border:1px solid var(--border);padding:4px 12px}
+.sst{font-size:10px;padding:5px 10px;border-radius:4px;margin:0 16px 8px}
+.sst.ok{background:rgba(100,255,218,.1);color:var(--green)}.sst.err{background:rgba(239,68,68,.1);color:var(--red)}
+.banner{margin:12px 16px 0;padding:8px 12px;border-left:3px solid var(--yellow);background:rgba(245,158,11,.08);border-radius:0 4px 4px 0;font-size:10px}
+.banner.red{border-left-color:var(--red);background:rgba(239,68,68,.1)}
+.actions{padding:0 16px 16px;display:flex;gap:10px;align-items:center}
+.login{max-width:340px;margin:12vh auto;padding:0 16px}
+.badge{display:inline-block;padding:2px 7px;border-radius:4px;background:rgba(96,165,250,.15);color:var(--blue);font-size:9px;font-weight:700}
+@media(max-width:900px){.grid,.sform{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div id="app" v-cloak>
+  <div class="login" v-if="!user">
+    <div class="card">
+      <div class="lbl">AVAntp Server · Login</div>
+      <div v-if="needsSetup" class="banner red" style="margin:0 0 10px">No user exists yet. On the box run: <b>sudo avantp-passwd admin</b></div>
+      <form @submit.prevent="doLogin">
+        <div class="sf"><label class="slbl" for="u">User</label><input id="u" type="text" v-model="lu" autocomplete="username" autofocus></div>
+        <div class="sf"><label class="slbl" for="p">Password</label><input id="p" type="password" v-model="lp" autocomplete="current-password"></div>
+        <div class="sf"><button class="btn" :disabled="busy">LOGIN</button></div>
+        <div v-if="loginErr" class="sst err" style="margin:10px 0 0">{{ loginErr }}</div>
+      </form>
+    </div>
+  </div>
+
+  <template v-else>
+  <header>
+    <h1>AVAntp Server</h1>
+    <div class="tab-nav">
+      <button v-for="t in tabs" :key="t" class="tab-btn" :class="{active:tab===t}" @click="tab=t">{{ t.toUpperCase() }}</button>
+    </div>
+    <div class="sub"><span>UTC&nbsp;<b>{{ utcNow }}</b></span><span>{{ user }}</span><button class="btn ghost" @click="doLogout">LOGOUT</button></div>
+    <div class="pill" :class="connected?'live':'error'"><span class="dot"></span>{{ connected?'LIVE':'RECONNECTING…' }}</div>
+  </header>
+
+  <div class="banner" v-if="draftDirty">Unsaved changes. Press <b>SAVE</b> on the tab you edited.</div>
+  <div class="banner" v-else-if="hasPending">Saved but <b>not applied</b> to the system yet (the apply engine is not installed in this version).</div>
+  <div class="banner red" v-if="draft && draft.wan.commissioning">COMMISSIONING is on: SSH and this WebUI are reachable from the WAN side. Switch it off in NETWORK once a management VLAN works.</div>
+
+  <!-- MONITOR -->
+  <div class="grid" v-if="tab==='monitor'">
+    <div class="card">
+      <div class="lbl">Sync state</div>
+      <div class="ring" :class="syncCls">{{ syncIcon }}</div>
+      <div class="sname" :class="syncTxt">{{ syncName }}</div>
+      <div class="smeta">Stratum {{ tr ? tr.stratum : '—' }} · {{ tr ? tr.ref_name || tr.ref_id : '—' }}</div>
+      <div class="div"></div>
+      <div class="cr"><span class="ck">Leap status</span><span class="cv">{{ tr ? tr.leap : '—' }}</span></div>
+      <div class="cr"><span class="ck">Update interval</span><span class="cv">{{ tr ? tr.update_interval_s.toFixed(0)+' s' : '—' }}</span></div>
+      <div class="cr"><span class="ck">Frequency</span><span class="cv">{{ tr ? tr.freq_ppm.toFixed(3)+' ppm' : '—' }}</span></div>
+    </div>
+    <div class="card">
+      <div class="lbl">System offset</div>
+      <div><span class="big" :class="offCls">{{ off.val }}</span><span class="bigunit" :class="offCls">{{ off.unit }}</span></div>
+      <div class="bigsub">to upstream NTP</div>
+      <div class="div"></div>
+      <div class="cr"><span class="ck">RMS offset</span><span class="cv">{{ tr ? fmtS(tr.rms_offset_s) : '—' }}</span></div>
+      <div class="cr"><span class="ck">Skew</span><span class="cv">{{ tr ? tr.skew_ppm.toFixed(3)+' ppm' : '—' }}</span></div>
+    </div>
+    <div class="card">
+      <div class="lbl">Root distance</div>
+      <div><span class="big neu">{{ tr ? fmtS(tr.root_delay_s) : '—' }}</span></div>
+      <div class="bigsub">root delay</div>
+      <div class="div"></div>
+      <div class="cr"><span class="ck">Root dispersion</span><span class="cv">{{ tr ? fmtS(tr.root_dispersion_s) : '—' }}</span></div>
+    </div>
+    <div class="card full">
+      <div class="lbl">VLAN clocks</div>
+      <table v-if="cfgVlans.length"><thead><tr><th>VLAN</th><th>Name</th><th>Address</th><th>Local time</th><th>UTC offset</th><th>NTP</th><th>Timecode</th></tr></thead>
+        <tbody><tr v-for="v in cfgVlans" :key="v.id">
+          <td>{{ v.id }}</td><td>{{ v.name }}</td><td>{{ v.mode==='static' ? v.address : 'DHCP' }}</td>
+          <td class="good">{{ localTime(v.utc_offset_min) }}</td><td>{{ fmtOff(v.utc_offset_min) }}</td>
+          <td>{{ v.ntp!==false ? 'serving' : 'off' }}</td>
+          <td>{{ tcText(v) }}</td></tr></tbody></table>
+      <div v-else class="smeta" style="text-align:left">No VLANs configured yet. Create them in the VLANS tab.</div>
+    </div>
+    <div class="card full">
+      <div class="lbl">Upstream sources</div>
+      <table v-if="sources.length"><thead><tr><th></th><th>Source</th><th>Stratum</th><th>Poll</th><th>Reach</th><th>Last rx</th><th>Offset</th></tr></thead>
+        <tbody><tr v-for="s in sources" :key="s.name"><td :class="s.state==='*'?'good':''">{{ s.state==='*'?'● used':s.state==='+'?'+ ok':s.state }}</td>
+          <td>{{ s.name }}</td><td>{{ s.stratum }}</td><td>{{ s.poll }}</td><td>{{ s.reach.toString(8) }}</td><td>{{ s.last_rx_s }} s</td><td>{{ fmtS(s.offset_s) }}</td></tr></tbody></table>
+      <div v-else class="smeta" style="text-align:left">{{ chronyRunning ? 'No sources yet.' : 'chrony is not running.' }}</div>
+    </div>
+    <div class="card full">
+      <div class="lbl">Interfaces</div>
+      <span v-for="i in ifaces" :key="i.name" class="nicpill" :class="i.state==='up'?'up':'down'">
+        <span class="dot"></span>{{ i.name }} · {{ i.addrs.join(', ') || (i.state==='up'?'no IPv4':'down') }}</span>
+    </div>
+  </div>
+
+  <!-- NETWORK -->
+  <template v-if="tab==='network' && draft">
+  <div class="sform">
+    <div class="card"><div class="lbl">WAN (internet side)</div>
+      <div class="sf"><label class="slbl">Interface</label><select v-model="draft.wan.iface"><option v-for="n in ifaceNames" :key="n">{{ n }}</option></select></div>
+      <div class="sf"><label class="slbl">Addressing</label><div class="sradio">
+        <label><input type="radio" value="dhcp" v-model="draft.wan.mode"> DHCP</label>
+        <label><input type="radio" value="static" v-model="draft.wan.mode"> Static</label></div></div>
+      <template v-if="draft.wan.mode==='static'">
+        <div class="sf"><label class="slbl">Address / prefix</label><input type="text" v-model="draft.wan.address" placeholder="192.168.1.10/24"></div>
+        <div class="sf"><label class="slbl">Gateway</label><input type="text" v-model="draft.wan.gateway"></div>
+        <div class="sf"><label class="slbl">DNS (comma separated)</label><input type="text" v-model="wanDns"></div>
+      </template>
+    </div>
+    <div class="card"><div class="lbl">LAN (carries the VLANs)</div>
+      <div class="sf"><label class="slbl">Interface</label><select v-model="draft.lan.iface"><option v-for="n in ifaceNames" :key="n">{{ n }}</option></select></div>
+      <div class="smeta" style="text-align:left">Tagged VLANs only. The LAN side never gets a gateway or DNS and never routes to the WAN.</div>
+    </div>
+    <div class="card"><div class="lbl">Commissioning</div>
+      <label class="chk"><input type="checkbox" v-model="draft.wan.commissioning"> Allow SSH + WebUI from the WAN side</label>
+      <div class="smeta" style="text-align:left;margin-top:8px">Temporary. Use it only until a management VLAN is reachable, then switch it off.</div>
+    </div>
+  </div>
+  <div class="sst" :class="msgCls" v-if="msg">{{ msg }}</div>
+  <div class="actions"><button class="btn" :disabled="busy" @click="save">SAVE</button></div>
+  </template>
+
+  <!-- VLANS -->
+  <template v-if="tab==='vlans' && draft">
+  <div class="grid"><div class="card full">
+    <div class="lbl">VLANs on {{ draft.lan.iface }} ({{ draft.vlans.length }} / 20)</div>
+    <table><thead><tr><th>ID</th><th>Name</th><th>Addressing</th><th>Address / prefix</th><th>UTC offset</th><th>NTP</th><th>Mgmt</th><th>Art-Net TC</th><th>MTC-RTP</th><th>FPS</th><th></th></tr></thead>
+    <tbody><tr v-for="(v,i) in draft.vlans" :key="i">
+      <td><input type="number" min="1" max="4094" v-model.number="v.id" style="width:72px"></td>
+      <td><input type="text" v-model="v.name" style="width:110px"></td>
+      <td><select v-model="v.mode"><option value="dhcp">DHCP</option><option value="static">Static</option></select></td>
+      <td><input type="text" v-model="v.address" :disabled="v.mode!=='static'" placeholder="10.20.0.2/24" style="width:130px"></td>
+      <td><select v-model.number="v.utc_offset_min"><option v-for="o in offsets" :key="o" :value="o">{{ fmtOff(o) }}</option></select></td>
+      <td><input type="checkbox" v-model="v.ntp"></td>
+      <td><input type="checkbox" v-model="v.mgmt"></td>
+      <td><input type="checkbox" v-model="v.timecode.artnet"></td>
+      <td><input type="checkbox" v-model="v.timecode.mtc_rtp"></td>
+      <td><select v-model.number="v.timecode.fps"><option>24</option><option>25</option><option>29.97</option><option>30</option></select></td>
+      <td><button class="btn ghost" @click="draft.vlans.splice(i,1)">✕</button></td></tr></tbody></table>
+    <div style="margin-top:12px"><button class="btn ghost" :disabled="draft.vlans.length>=20" @click="addVlan">+ ADD VLAN</button></div>
+    <div class="smeta" style="text-align:left;margin-top:10px">Timecode outputs are off by default. UTC offset applies to the VLAN's local time and timecode; NTP itself always carries UTC. DHCP VLANs never accept routes, DNS or NTP from the server.</div>
+  </div></div>
+  <div class="sst" :class="msgCls" v-if="msg">{{ msg }}</div>
+  <div class="actions"><button class="btn" :disabled="busy" @click="save">SAVE</button></div>
+  </template>
+
+  <!-- NTP -->
+  <template v-if="tab==='ntp' && draft">
+  <div class="sform">
+    <div class="card"><div class="lbl">Default (preferred)</div>
+      <textarea v-model="up.default" placeholder="pool.ntp.org"></textarea><div class="smeta" style="text-align:left;margin-top:6px">One host per line.</div></div>
+    <div class="card"><div class="lbl">Backup</div>
+      <textarea v-model="up.backup" placeholder="time.cloudflare.com"></textarea></div>
+    <div class="card"><div class="lbl">Custom</div>
+      <textarea v-model="up.custom" placeholder="ntp.example.org"></textarea></div>
+    <div class="card sfull"><label class="chk"><input type="checkbox" v-model="draft.upstream.local_fallback"> Keep serving time (stratum 10) when no upstream is reachable</label>
+      <div class="smeta" style="text-align:left;margin-top:6px">Off is safer: clients then see the server as unsynchronised instead of trusting a drifting clock.</div></div>
+  </div>
+  <div class="sst" :class="msgCls" v-if="msg">{{ msg }}</div>
+  <div class="actions"><button class="btn" :disabled="busy" @click="save">SAVE</button></div>
+  </template>
+
+  <!-- SYSTEM -->
+  <div class="sform" v-if="tab==='system'">
+    <div class="card"><div class="lbl">Change password ({{ user }})</div>
+      <form @submit.prevent="changePw">
+        <div class="sf"><label class="slbl">Current</label><input type="password" v-model="pw.old" autocomplete="current-password"></div>
+        <div class="sf"><label class="slbl">New (min 10 characters)</label><input type="password" v-model="pw.new" autocomplete="new-password"></div>
+        <div class="sf"><button class="btn" :disabled="busy">CHANGE</button></div>
+      </form>
+      <div class="sst" :class="msgCls" v-if="msg" style="margin:10px 0 0">{{ msg }}</div>
+    </div>
+  </div>
+  </template>
+</div>
+<script src="/vue.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,2 @@
+#!/bin/sh
+echo '[{"ifname":"lo","operstate":"UNKNOWN","address":"00:00:00:00:00:00","addr_info":[{"family":"inet","local":"127.0.0.1","prefixlen":8}]},{"ifname":"enp3s0","operstate":"DOWN","address":"00:04:5f:43:ca:25","addr_info":[]},{"ifname":"enp4s0","operstate":"UP","address":"00:04:5f:43:ca:26","addr_info":[{"family":"inet","local":"10.1.1.24","prefixlen":24}]}]'

@@ -109,3 +109,12 @@ def validate(cfg):
 def load(path):
     with open(path) as f:
         return validate(json.load(f))
+
+
+def dump(cfg):
+    """JSON-safe copy of a validated config (drops computed fields)."""
+    c = json.loads(json.dumps(cfg, default=lambda o: None))
+    for v in c["vlans"]:
+        v.pop("_if", None)
+        v.pop("iface", None)
+    return c

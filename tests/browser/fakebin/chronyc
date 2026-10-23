@@ -1,0 +1,5 @@
+#!/bin/sh
+case "$*" in
+ *tracking*) echo "C0A80101,pool.ntp.org,3,$(date +%s).0,0.000012,-0.00001,0.00002,1.23,0.1,0.05,0.0123,0.002,64.0,Normal";;
+ *sources*) echo "^,*,pool.ntp.org,2,6,377,12,0.000123,0.0001,0.0002"; echo "^,+,time.cloudflare.com,3,6,377,30,-0.000345,0.0001,0.0002";;
+esac
