@@ -49,9 +49,9 @@ Do not start an update while an APPLY is waiting for confirmation.
 | New version misbehaves | | Go back, see below. |
 | WebUI unreachable after the update | | `ssh node@10.1.10.1`, then `sudo systemctl status avantp-web`, `sudo journalctl -u avantp-web -n 40`. |
 
-## Private repository
+## If the repository is private again
 
-If the repository `DHPKE/AVAntpServer` is private, the box (which has no GitHub login) gets "GitHub answered 404" from
+The repository is public, so the box needs no login. If it is made private again, the box (which has no GitHub login) gets "GitHub answered 404" from
 the Software card and a "repository not found" from `update.sh`. Two ways to give it access:
 
 1. **Make the repository public** (GitHub -> Settings -> Danger zone -> Change visibility). Nothing else to do.
