@@ -71,7 +71,7 @@ check('unsaved banner appears', (await text()).includes('Unsaved changes'))
 // row 1: mgmt static, +01:00 ; row 2 DHCP with Art-Net, -05:00
 await ev(`(()=>{const r=document.querySelectorAll('tbody tr');
  const set=(el,v)=>{el.value=v;el.dispatchEvent(new Event(el.tagName==='SELECT'?'change':'input'))};
- const i0=r[0].querySelectorAll('input,select'); set(i0[0],10); set(i0[1],'mgmt'); set(i0[2],'static'); return 1})()`)
+ const i0=r[0].querySelectorAll('input,select'); set(i0[0],10); set(i0[1],'Dante Prim (A–B)'); set(i0[2],'static'); return 1})()`)
 await sleep(200)
 await ev(`(()=>{const r=document.querySelectorAll('tbody tr');
  const set=(el,v)=>{el.value=v;el.dispatchEvent(new Event(el.tagName==='SELECT'?'change':'input'))};
@@ -80,7 +80,8 @@ await ev(`(()=>{const r=document.querySelectorAll('tbody tr');
 await sleep(300)
 await shot('4-vlans')
 await click('.actions .btn'); await sleep(900)
-t = await text(); check('save OK message', t.includes('Saved. Press APPLY TO SYSTEM'), t.slice(-200))
+t = await text(); check('names with spaces are accepted and saved', !(await text()).includes('invalid name'), (await text()).slice(-200))
+check('save OK message', t.includes('Saved. Press APPLY TO SYSTEM'), t.slice(-200))
 check('saved-but-not-active banner with APPLY button', t.includes('not active on the system yet') && t.includes('APPLY TO SYSTEM'))
 
 // apply -> confirm window -> confirm
@@ -115,7 +116,7 @@ await tab('NTP'); await sleep(300)
 check('NTP defaults loaded', await ev(`document.querySelectorAll('textarea')[0].value`) === 'pool.ntp.org')
 await tab('MONITOR'); await sleep(2500)
 t = await text()
-check('VLAN clocks table shows VLANs with city time zones and current offsets', t.includes('mgmt') && t.includes('show') && /Berlin \(UTC\+0[12]:00\)/.test(t) && /New York \(UTC−0[45]:00\)/.test(t), t.slice(300, 700))
+check('VLAN clocks table shows VLANs with city time zones and current offsets', t.includes('Dante Prim (A–B)') && t.includes('show') && /Berlin \(UTC\+0[12]:00\)/.test(t) && /New York \(UTC−0[45]:00\)/.test(t), t.slice(300, 700))
 check('VLAN IPs shown from the live interfaces (static + DHCP lease)', t.includes('10.10.10.2/24') && t.includes('10.20.0.77/24'), t.slice(300, 700))
 check('timecode column: Art-Net on show', t.includes('Art-Net @25'))
 await shot('5-monitor-vlans')
@@ -128,7 +129,7 @@ check('short new password rejected', (await text()).includes('at least 10 charac
 // reload keeps session and shows saved config
 await send('Page.reload'); await sleep(2500)
 t = await text(); check('reload: still logged in', t.includes('MONITOR'))
-check('reload: saved VLANs persisted', t.includes('show') && t.includes('mgmt'))
+check('reload: saved VLANs persisted', t.includes('show') && t.includes('Dante Prim'))
 
 await click('.sub .btn'); await sleep(800)
 t = await text(); check('logout returns to login', t.includes('LOGIN') && !t.includes('MONITOR'))

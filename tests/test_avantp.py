@@ -81,6 +81,39 @@ class Validation(unittest.TestCase):
         c["vlans"][0]["name"] = "a\nb"
         self.bad(c)
 
+    def test_vlan_names_are_human_labels(self):
+        for ok in ("Dante Prim", "Dante Sec", "Audio Control", "MA\u2013NET", "MA-NET", "sACN", "VideoStreaming",
+                   "\u00dcber (1)", "A", "x" * 32, "  spaced   out  "):
+            c = copy.deepcopy(BASE)
+            c["vlans"][0]["name"] = ok
+            v = config.validate(c)["vlans"][0]
+            self.assertEqual(v["name"], " ".join(ok.split()))        # trimmed + collapsed
+        for bad in ("", "   ", "x" * 33, "a#b", 'a"b', "a;b", "<script>", "a\nb", "a\tb", "a\x00b", "a\u2028b", "-lead", None, 5):
+            c = copy.deepcopy(BASE)
+            c["vlans"][0]["name"] = bad
+            self.bad(c)
+
+    def test_name_error_says_what_is_allowed(self):
+        c = copy.deepcopy(BASE)
+        c["vlans"][0]["name"] = "a#b"
+        with self.assertRaises(config.ConfigError) as cm:
+            config.validate(c)
+        self.assertIn("letters, digits, space", str(cm.exception))
+        self.assertIn("vlan 10", str(cm.exception))
+
+    def test_names_unique_ignoring_case(self):
+        c = copy.deepcopy(BASE)
+        c["vlans"][0]["name"], c["vlans"][1]["name"] = "Dante Prim", "dante  PRIM"
+        self.bad(c)
+
+    def test_rendered_files_survive_odd_names(self):
+        c = copy.deepcopy(BASE)
+        c["vlans"][0]["name"] = "Dante Prim (A\u2013B)"
+        v = config.validate(c)
+        self.assertIn("# VLAN 10 Dante Prim (A\u2013B)", render.nftables(v))
+        for name, body in render.networkd(v).items():
+            self.assertNotIn("Dante", body)                          # names never reach the network files
+
     def test_same_nic_rejected(self):
         c = copy.deepcopy(BASE)
         c["lan"]["iface"] = "enp4s0"

@@ -186,9 +186,9 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
     <table><thead><tr><th>ID</th><th>Name</th><th>Addressing</th><th>Address / prefix</th><th>Time zone</th><th>NTP</th><th>Mgmt</th><th>Art-Net TC</th><th>MTC-RTP</th><th>FPS</th><th></th></tr></thead>
     <tbody><tr v-for="(v,i) in draft.vlans" :key="i">
       <td><input type="number" min="1" max="4094" v-model.number="v.id" style="width:72px"></td>
-      <td><input type="text" v-model="v.name" style="width:110px"></td>
+      <td><input type="text" v-model="v.name" maxlength="32" style="width:150px" title="Letters, digits, space, - _ . ( ) - up to 32 characters"></td>
       <td><select v-model="v.mode"><option value="dhcp">DHCP</option><option value="static">Static</option></select></td>
-      <td><input type="text" v-model="v.address" :disabled="v.mode!=='static'" placeholder="10.20.0.2/24" style="width:130px"></td>
+      <td><input type="text" v-model="v.address" :disabled="v.mode!=='static'" :placeholder="v.mode==='static' ? '10.20.0.2/24' : 'from DHCP'" style="width:130px"></td>
       <td><select v-model="v.timezone" style="min-width:210px"><optgroup v-for="g in tzGroups" :key="g.region" :label="g.region"><option v-for="z in g.zones" :key="z.id" :value="z.id">{{ z.label }}</option></optgroup></select></td>
       <td><input type="checkbox" v-model="v.ntp"></td>
       <td><input type="checkbox" v-model="v.mgmt"></td>

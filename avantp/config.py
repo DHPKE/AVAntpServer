@@ -6,7 +6,9 @@ import zoneinfo
 
 IFACE_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,14}$")
 TZ_RE = re.compile(r"^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+){0,2}$")
-NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+# a VLAN name is a display label ("Dante Prim", "MA-NET", "Über (1)"): letters in any language, digits, space, - _ . ( )
+NAME_RE = re.compile(r"^\w[\w .()\-\u2010-\u2015]{0,31}$")
+CONTROL_RE = re.compile(r"[\x00-\x1f\x7f\x85\u2028\u2029]")
 HOST_RE = re.compile(r"^(?=.{1,253}$)([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$")
 MAX_VLANS = 20
 FRAME_RATES = (24, 25, 29.97, 30)
@@ -71,9 +73,12 @@ def validate(cfg):
         _need(isinstance(vid, int) and 1 <= vid <= 4094, f"vlan id {vid!r} out of range")
         _need(vid not in ids, f"duplicate vlan id {vid}")
         ids.add(vid)
-        _need(NAME_RE.match(v.get("name", "")), f"vlan {vid}: invalid name")
-        _need(v["name"] not in names, f"duplicate vlan name {v['name']}")
-        names.add(v["name"])
+        name = v.get("name")
+        _need(isinstance(name, str) and not CONTROL_RE.search(name), f"vlan {vid}: the name must be plain text")
+        name = v["name"] = " ".join(name.split())          # trim, collapse repeated spaces
+        _need(NAME_RE.match(name), f"vlan {vid}: invalid name {name!r} (1-32 characters: letters, digits, space, - _ . ( ))")
+        _need(name.casefold() not in names, f"duplicate vlan name {name!r}")
+        names.add(name.casefold())
         v.setdefault("mode", "dhcp")
         _need(v["mode"] in ("dhcp", "static"), f"vlan {vid}: mode must be dhcp or static")
         if v["mode"] == "static":
