@@ -26,7 +26,7 @@ SIG = b"\xff\xff"
 MAX_PEERS = 8
 PEER_TIMEOUT = 90            # seconds without any packet from a peer (they send clock sync at least every ~60 s)
 MTC_RATE_CODE = {24: 0, 25: 1, 29.97: 2, 30: 3}      # bits 1-2 of the last quarter frame / bits 5-6 of the hour byte
-PAYLOAD_TYPE = 97            # dynamic type, as used by Apple
+PAYLOAD_TYPE = 97            # dynamic type, as used by Apple (second RTP byte 0x61, marker clear)
 RTP_CLOCK = 10000            # AppleMIDI timestamps count 100-microsecond units
 
 
@@ -70,7 +70,9 @@ def build_ck(ssrc, count, ts):
 def rtp_midi(seq, timestamp, ssrc, midi):
     """One RTP packet carrying a short MIDI command list (no journal, no delta time for the first command)."""
     assert 0 < len(midi) <= 15
-    return struct.pack("!BBHII", 0x80, 0x80 | PAYLOAD_TYPE, seq & 0xFFFF, timestamp & 0xFFFFFFFF, ssrc) + bytes([len(midi)]) + midi
+    # second byte = payload type 97 with the marker bit CLEAR (0x61), exactly what a Mac sends. macOS completes the session
+    # with a marker-set packet (0xE1) but then drops the MIDI data (seen with the real CoreMIDI stack).
+    return struct.pack("!BBHII", 0x80, PAYLOAD_TYPE, seq & 0xFFFF, timestamp & 0xFFFFFFFF, ssrc) + bytes([len(midi)]) + midi
 
 
 def quarter_frame(piece, h, m, s, f, fps):

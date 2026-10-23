@@ -117,9 +117,9 @@ class ProtocolTest(unittest.TestCase):
                 pkt = self.peer.data.recv(1500)
             except socket.timeout:
                 pass
-        # RTP header: V=2, marker + payload type 97, then the command list: length 10, MTC full frame SysEx
+        # RTP header: V=2, payload type 97 without marker bit, then the command list: length 10, MTC full frame SysEx
         self.assertEqual(pkt[0], 0x80)
-        self.assertEqual(pkt[1], 0x80 | 97)
+        self.assertEqual(pkt[1], 0x61)                                          # payload type 97, marker clear: byte-for-byte what a Mac sends
         self.assertEqual(struct.unpack("!I", pkt[8:12])[0], self.ep.ssrc)
         self.assertEqual(pkt[12], 10)
         body = pkt[13:]
