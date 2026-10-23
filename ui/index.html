@@ -277,7 +277,7 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
       <div class="logbar">
         <div class="f"><label class="slbl">Source</label><select v-model="logSel.source" @change="loadLog">
           <option value="all">All AVAntp services</option><option value="web">WebUI</option><option value="apply">Apply (network, firewall)</option>
-          <option value="timecode">Timecode sender</option><option value="update">Update mode</option><option value="firewall">Firewall at boot</option>
+          <option value="timecode">Timecode sender</option><option value="update">Update mode</option><option value="software">Software update</option><option value="firewall">Firewall at boot</option>
           <option value="chrony">chrony (NTP)</option><option value="network">Network (networkd, DNS)</option><option value="kernel">Kernel (NIC links, hardware)</option></select></div>
         <div class="f"><label class="slbl">Level</label><select v-model="logSel.level" @change="loadLog">
           <option value="all">Everything</option><option value="warning">Warnings and errors</option><option value="error">Errors only</option></select></div>
@@ -317,7 +317,7 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
         <div class="logbox" style="height:auto;max-height:130px;margin-top:6px;font-size:10px"><div v-for="(l, i) in (sw.log || [])" :key="i" class="ln dim">{{ l }}</div><div v-if="!(sw.log || []).length" class="ln dim">&hellip;</div></div>
       </div>
       <button class="btn ghost" :disabled="swBusy || busy || applyBusy" @click="swAsk('check')">CHECK FOR UPDATES</button>
-      <button class="btn" style="margin-left:8px" :disabled="swBusy || busy || applyBusy || !cfgReady" @click="swAsk('update')">UPDATE NOW</button>
+      <button class="btn" style="margin-left:8px" :disabled="swBusy || busy || applyBusy" @click="swAsk('update')">UPDATE NOW</button>
       <div class="smeta" style="text-align:left;margin-top:10px">UPDATE NOW opens web access just for the download, installs the newest version from GitHub and closes web access again. The WebUI restarts: log in again afterwards. Your network, firewall and settings are not touched.</div>
       <details style="margin-top:12px"><summary class="smeta" style="cursor:pointer;text-align:left">Advanced: open web access by hand (for apt on the box)</summary>
         <div class="cr" style="margin-top:8px"><span class="ck">Update mode</span><span class="cv" :class="um.state==='on' ? 'warnc' : ''">{{ um.state==='on' ? 'ON, ' + umLeftText + ' left' : 'off' }}</span></div>

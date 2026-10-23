@@ -7,8 +7,10 @@ import subprocess
 import time
 
 SOURCES = {
-    "all": ["avantp-web", "avantp-apply", "avantp-update", "avantp-timecode", "avantp-nftables", "avantp-recover"],
+    "all": ["avantp-web", "avantp-apply", "avantp-update", "avantp-software", "avantp-timecode", "avantp-nftables",
+            "avantp-recover"],
     "web": ["avantp-web"], "apply": ["avantp-apply", "avantp-recover"], "update": ["avantp-update"],
+    "software": ["avantp-software"],
     "timecode": ["avantp-timecode"], "firewall": ["avantp-nftables"],
     "chrony": ["chrony"], "network": ["systemd-networkd", "systemd-resolved"],
     "kernel": None,                                   # -k: kernel messages, e.g. NIC link changes, hardware errors

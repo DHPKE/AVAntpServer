@@ -1,6 +1,10 @@
 import http.client
 import json
 import os
+import shutil
+import socket
+import ssl
+import subprocess
 import tempfile
 import threading
 import time
@@ -102,6 +106,42 @@ class WebTest(unittest.TestCase):
         self.assertEqual(self.req("GET", "/api/config", cookie=ck1)[0], 401)
         self.assertEqual(self.req("GET", "/api/config", cookie=ck2)[0], 200)
         self.app.users.set_password("admin", "correct horse battery")
+        self.app.sessions.fails.clear()                   # the wrong old password above counts as a failed attempt
+
+    def test_password_change_is_throttled(self):
+        _, ck, csrf = self.login()
+        for _ in range(5):
+            self.assertEqual(self.req("POST", "/api/password", {"old": "guess", "new": "x" * 12}, cookie=ck, csrf=csrf)[0], 403)
+        self.assertEqual(self.req("POST", "/api/password", {"old": "correct horse battery", "new": "x" * 12},
+                                  cookie=ck, csrf=csrf)[0], 429)
+        self.app.sessions.fails.clear()
+
+    def test_helpers_that_died_do_not_block_forever(self):
+        _, ck, csrf = self.login()
+        st_path, sw_path = os.path.join(self.dir, "status.json"), os.path.join(self.dir, "software.json")
+        json.dump({"state": "applying", "time": time.time() - web.STALE_APPLY - 5}, open(st_path, "w"))
+        self.assertEqual(self.req("GET", "/api/apply", cookie=ck)[1]["state"], "error")
+        json.dump({"state": "pending-confirm", "time": time.time() - 300, "deadline": time.time() - 120}, open(st_path, "w"))
+        self.assertEqual(self.req("GET", "/api/apply", cookie=ck)[1]["state"], "error")
+        os.unlink(st_path)
+        json.dump({"state": "updating", "time": time.time() - web.STALE_SOFTWARE - 5}, open(sw_path, "w"))
+        d = self.req("GET", "/api/software", cookie=ck)[1]
+        self.assertEqual(d["state"], "error")
+        self.assertIn("stopped without finishing", d["error"])
+        self.assertEqual(self.req("POST", "/api/software", {"action": "check"}, cookie=ck, csrf=csrf)[0], 202)
+        os.unlink(os.path.join(self.dir, "software.request"))
+        os.unlink(sw_path)
+
+    def test_negative_content_length_is_refused(self):
+        _, ck, csrf = self.login()
+        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        c.putrequest("PUT", "/api/config")
+        c.putheader("Content-Length", "-1")
+        c.putheader("Cookie", ck)
+        c.putheader("X-CSRF", csrf)
+        c.endheaders()
+        self.assertEqual(c.getresponse().status, 400)
+        c.close()
 
     def test_apply_and_confirm_endpoints(self):
         _, ck, csrf = self.login()
@@ -117,7 +157,7 @@ class WebTest(unittest.TestCase):
         os.unlink(os.path.join(self.dir, "apply.request"))
         self.assertEqual(self.req("POST", "/api/confirm", {}, cookie=ck, csrf=csrf)[0], 409)   # nothing waiting
         for state, code in (("applying", 409), ("pending-confirm", 409)):
-            json.dump({"state": state}, open(os.path.join(self.dir, "status.json"), "w"))
+            json.dump({"state": state, "time": time.time(), "deadline": time.time() + 90}, open(os.path.join(self.dir, "status.json"), "w"))
             self.assertEqual(self.req("POST", "/api/apply", {}, cookie=ck, csrf=csrf)[0], code)   # no double apply
         self.assertEqual(self.req("POST", "/api/confirm", {}, cookie=ck, csrf=csrf)[0], 200)
         self.assertTrue(os.path.exists(os.path.join(self.dir, "confirm")))
@@ -206,12 +246,12 @@ class WebTest(unittest.TestCase):
             os.unlink(req)
         path = os.path.join(self.dir, "software.json")
         for busy in ("checking", "updating"):
-            json.dump({"state": busy}, open(path, "w"))
+            json.dump({"state": busy, "time": time.time()}, open(path, "w"))
             self.assertEqual(self.req("POST", "/api/software", {"action": "update"}, cookie=ck, csrf=csrf)[0], 409)
         json.dump({"state": "done"}, open(path, "w"))
         self.assertEqual(self.req("POST", "/api/software", {"action": "check"}, cookie=ck, csrf=csrf)[0], 202)
         os.unlink(req)
-        json.dump({"state": "pending-confirm"}, open(os.path.join(self.dir, "status.json"), "w"))
+        json.dump({"state": "pending-confirm", "deadline": time.time() + 90}, open(os.path.join(self.dir, "status.json"), "w"))
         self.assertEqual(self.req("POST", "/api/software", {"action": "update"}, cookie=ck, csrf=csrf)[0], 409)
         os.unlink(os.path.join(self.dir, "status.json"))
         os.unlink(path)
@@ -238,7 +278,7 @@ class WebTest(unittest.TestCase):
         self.assertEqual(self.req("GET", "/api/update-mode", cookie=ck)[1]["state"], "off")
         os.unlink(os.path.join(self.dir, "update.json"))
         # not while an apply is waiting for confirmation
-        json.dump({"state": "pending-confirm"}, open(os.path.join(self.dir, "status.json"), "w"))
+        json.dump({"state": "pending-confirm", "deadline": time.time() + 90}, open(os.path.join(self.dir, "status.json"), "w"))
         self.assertEqual(self.req("POST", "/api/update-mode", {"on": True}, cookie=ck, csrf=csrf)[0], 409)
         os.unlink(os.path.join(self.dir, "status.json"))
 
@@ -263,3 +303,27 @@ class WebTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(shutil.which("openssl"), "needs openssl for a test certificate")
+class TlsTest(unittest.TestCase):
+    """Over TLS the handshake must not run in the accepting thread: one silent client would freeze the WebUI."""
+
+    def test_idle_connection_does_not_block_others(self):
+        d = tempfile.mkdtemp()
+        crt, key = os.path.join(d, "tls.crt"), os.path.join(d, "tls.key")
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-subj", "/CN=t",
+                        "-keyout", key, "-out", crt], capture_output=True, check=True)
+        _, srv = web.serve(d, "127.0.0.1", 0, crt, key)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        port = srv.server_address[1]
+        idle = socket.create_connection(("127.0.0.1", port))             # connects, never starts TLS
+        try:
+            ctx = ssl._create_unverified_context()
+            c = http.client.HTTPSConnection("127.0.0.1", port, timeout=5, context=ctx)
+            c.request("GET", "/api/session")
+            self.assertEqual(c.getresponse().status, 200)
+            c.close()
+        finally:
+            idle.close()
+            srv.shutdown()

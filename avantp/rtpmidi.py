@@ -12,7 +12,6 @@ are functions, and `Endpoint` only touches the sockets it is given.
 """
 import logging
 import random
-import select
 import socket
 import struct
 import time
@@ -98,7 +97,6 @@ class Peer:
     def __init__(self, ip, token, name, ssrc, ctrl_port, now):
         self.ip, self.token, self.name, self.ssrc = ip, token, name, ssrc
         self.ctrl_port, self.data_port, self.seen, self.joined = ctrl_port, None, now, now
-        self.synced = False
 
     @property
     def established(self):
@@ -209,9 +207,7 @@ class Endpoint:
             if p:
                 p.seen = now
                 if msg["count"] == 0:                              # the peer starts the clock sync: answer with our time
-                    sock.sendto(build_ck(self.ssrc, 1, (msg["ts"][0], self.ts() * 1, 0)), addr)
-                else:
-                    p.synced = True
+                    sock.sendto(build_ck(self.ssrc, 1, (msg["ts"][0], self.ts(), 0)), addr)
         elif msg["cmd"] == "RS":
             p = next((q for q in self.peers.values() if q.ip == ip and q.ssrc == msg["ssrc"]), None)
             if p:

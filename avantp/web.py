@@ -10,7 +10,6 @@ import json
 import logging
 import os
 import ssl
-import sys
 import threading
 import time
 import traceback
@@ -26,6 +25,8 @@ STATIC = {"/": ("index.html", "text/html; charset=utf-8"), "/app.js": ("app.js",
 CSP = ("default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; "
        "connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
 MAX_BODY = 256 * 1024
+CONN_TIMEOUT = 20                     # seconds a connection may sit idle (TLS handshake, request line, body)
+STALE_SOFTWARE, STALE_APPLY = 1300, 600
 
 
 def version():
@@ -69,6 +70,11 @@ class App:
 
     def software_status(self):
         st = self._read("software.json", self.run) or {"state": "idle"}
+        # the helper rewrites the file on every step; systemd kills it after 1200 s. Silence for longer means it died (killed,
+        # crashed, power cut mid-update) and the state would otherwise block every later check or update
+        if st.get("state") in ("checking", "updating") and time.time() - st.get("time", 0) > STALE_SOFTWARE:
+            st = dict(st, state="error", error="the update helper stopped without finishing (see the Log tab, source "
+                      "'Software update'); you can start a new check or update")
         st["installed_now"] = version()                      # what this process runs (changes after an update + restart)
         return st
 
@@ -79,7 +85,14 @@ class App:
         return st
 
     def apply_status(self):
-        return self._read("status.json", self.run) or {"state": "idle"}
+        st = self._read("status.json", self.run) or {"state": "idle"}
+        now = time.time()
+        # the same for a helper that died mid-apply: without this, APPLY and UPDATE stay refused until the next reboot
+        if (st.get("state") == "pending-confirm" and now > st.get("deadline", 0) + 60 or
+                st.get("state") == "applying" and now - st.get("time", 0) > STALE_APPLY):
+            st = {"state": "error", "time": st.get("time"), "error": "the apply helper stopped without finishing (see the Log "
+                  "tab). The previous setup is restored at the next restart of the box; or apply again."}
+        return st
 
     def pending(self):
         return self._read("pending.json")
@@ -95,6 +108,17 @@ def make_handler(app):
     class H(http.server.BaseHTTPRequestHandler):
         server_version = "avantp"
         sys_version = ""
+        timeout = CONN_TIMEOUT
+
+        def handle(self):
+            # the TLS handshake runs here, in this connection's own thread and with a time limit (setup() set it). Done in
+            # accept() (Python's default), one client that connects and sends nothing would freeze the WebUI for everybody.
+            try:
+                if isinstance(self.request, ssl.SSLSocket):
+                    self.request.do_handshake()
+                super().handle()
+            except (ssl.SSLError, OSError):     # handshake failed or timed out, client went away: just drop the connection
+                pass
 
         def log_message(self, fmt, *a):
             log.info("%s %s", self.client_address[0], fmt % a)
@@ -122,7 +146,7 @@ def make_handler(app):
 
         def body(self):
             n = int(self.headers.get("Content-Length") or 0)
-            if n > MAX_BODY:
+            if n < 0 or n > MAX_BODY:          # -1 would mean "read until the client closes"
                 raise ValueError("body too large")
             try:
                 return json.loads(self.rfile.read(n) or b"{}")
@@ -224,7 +248,10 @@ def make_handler(app):
                 app.sessions.drop(tok)
                 return self.send(200, {"ok": True}, extra=[self.cookie("", 0)])
             if post and path == "/api/password":
+                if app.sessions.throttled(ip):          # same brake as the login: an open session must not allow guessing
+                    return self.err(429, "too many wrong passwords, wait a few minutes")
                 if not app.users.check(s["user"], str(data.get("old", ""))):
+                    app.sessions.fail(ip)
                     return self.err(403, "current password is wrong")
                 try:
                     app.users.set_password(s["user"], str(data.get("new", "")))
@@ -292,5 +319,5 @@ def serve(data_dir, host, port, certfile=None, keyfile=None, etc_dir=None, run_d
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.minimum_version = ssl.TLSVersion.TLSv1_2
         ctx.load_cert_chain(certfile, keyfile)
-        srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+        srv.socket = ctx.wrap_socket(srv.socket, server_side=True, do_handshake_on_connect=False)
     return app, srv

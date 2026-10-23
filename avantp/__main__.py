@@ -1,4 +1,3 @@
-import logging
 import os
 import sys
 
@@ -167,7 +166,8 @@ def main(argv):
     if len(argv) >= 2 and argv[1] == "update-mode":
         return run_update_mode(argv[2:])
     if len(argv) != 4 or argv[1] != "render":
-        print("usage: python -m avantp render <config.json> <outdir> | web <host> <port> | passwd <user> | apply [--fake] [--watch]", file=sys.stderr)
+        print("usage: python -m avantp render <config.json> <outdir> | web <host> <port> | passwd <user> | timecode | recover\n"
+              "       | apply|update-mode|software [--fake] [--watch]", file=sys.stderr)
         return 2
     try:
         cfg = config.load(argv[2])

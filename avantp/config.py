@@ -76,6 +76,7 @@ def validate(cfg, strict=True):
         up[k] = [_host(h, f"upstream.{k}") for h in up[k]]
     _need(up["default"] or up["backup"] or up["custom"], "at least one upstream NTP source required")
     up.setdefault("local_fallback", False)
+    _need(isinstance(up["local_fallback"], bool), "upstream.local_fallback must be true or false")
 
     vlans = cfg.setdefault("vlans", [])
     _need(len(vlans) <= MAX_VLANS, f"at most {MAX_VLANS} VLANs")
@@ -115,8 +116,12 @@ def validate(cfg, strict=True):
         v.setdefault("ntp", True)
         v.setdefault("mgmt", False)
         tc = v.setdefault("timecode", {})
+        _need(isinstance(tc, dict), f"vlan {vid}: timecode must be an object")
         tc.setdefault("artnet", False)
         tc.setdefault("mtc_rtp", False)
+        # these switches open firewall ports: "no" or "0" must not count as on
+        for k, d in (("ntp", v), ("mgmt", v), ("artnet", tc), ("mtc_rtp", tc)):
+            _need(isinstance(d[k], bool), f"vlan {vid}: {k} must be true or false")
         tc.setdefault("fps", 25)
         _need(tc["fps"] in FRAME_RATES, f"vlan {vid}: timecode.fps must be one of {FRAME_RATES}")
         # Art-Net goes out as a broadcast on the VLAN, or as unicast to one receiver on that VLAN

@@ -307,7 +307,6 @@ createApp({setup() {
   // ---- software update
   const swBusy = computed(() => ['checking', 'updating'].includes(sw.value.state))
   const applyBusy = computed(() => ['applying', 'pending-confirm'].includes(ap.value.state))
-  const cfgReady = computed(() => true)
   const swFresh = computed(() => sw.value.time && utcMs.value / 1000 - sw.value.time < 120)
   const swCls = computed(() => { const c = (sw.value.check || {}).state; return c === 'uptodate' ? 'good' : c === 'newer' ? 'warnc' : '' })
   const swText = computed(() => {
@@ -424,7 +423,7 @@ createApp({setup() {
 
   onMounted(start)
   onUnmounted(stop)
-  return {dis, dismiss, logSince, clearLog, showAllLog, sw, swBusy, applyBusy, cfgReady, swFresh, swCls, swText, swAsk, logSel, logLines, logErr, logLoaded, logbox, boots, bootsErr, dt, logCls, loadLog, loadBoots, copyLog, restartNotice, dismissRestart, lastUpdate, dhcpState, collapsed, toggleCard, liveTc, synced, um, umLeftText, setUpdateMode, version, tabs, tab, user, needsSetup, lu, lp, loginErr, busy, connected, doLogin, doLogout, draft, up, msg, msgCls, pw,
+  return {dis, dismiss, logSince, clearLog, showAllLog, sw, swBusy, applyBusy, swFresh, swCls, swText, swAsk, logSel, logLines, logErr, logLoaded, logbox, boots, bootsErr, dt, logCls, loadLog, loadBoots, copyLog, restartNotice, dismissRestart, lastUpdate, dhcpState, collapsed, toggleCard, liveTc, synced, um, umLeftText, setUpdateMode, version, tabs, tab, user, needsSetup, lu, lp, loginErr, busy, connected, doLogin, doLogout, draft, up, msg, msgCls, pw,
     ap, left, recent, applyNow, confirm, cfg, shown, tr, chronyRunning, sources, ifaces, ifaceNames, syncCls, syncTxt, syncIcon, syncName, fmtS, off, offCls, utcNow,
     tzLabel, tzGroups, localTime, tcText, tcCls, tcStat, tc, utcDate, vlanAddr, cfgVlans, hasPending, draftDirty, wanDns, addVlan, save, changePw}
 }}).mount('#app')

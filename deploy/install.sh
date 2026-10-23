@@ -60,6 +60,8 @@ elif [ ! -f /etc/avantp/owner ]; then echo node > /etc/avantp/owner; fi
 
 # ---- keep what an earlier hand-started WebUI created (login + certificate)
 OLD=$(getent passwd "${SUDO_USER:-node}" | cut -d: -f6)/avantp-data
+# $DATA belongs to the WebUI user and this runs as root: a symlink there must never make root write or chown elsewhere
+for f in users.json tls.crt tls.key; do [ ! -L "$DATA/$f" ] || { rm -f "${DATA:?}/${f:?}"; echo "removed a symlink $DATA/$f"; }; done
 for f in users.json tls.crt tls.key; do
   [ -f "$DATA/$f" ] || { [ -f "$OLD/$f" ] && cp "$OLD/$f" "$DATA/$f" && echo "kept $f from $OLD"; } || true
 done
@@ -67,7 +69,10 @@ if [ ! -f "$DATA/tls.key" ]; then
   openssl req -x509 -newkey rsa:3072 -nodes -days 3650 -subj "/CN=avantp" -keyout "$DATA/tls.key" -out "$DATA/tls.crt" 2>/dev/null
   echo "created a self-signed certificate"
 fi
-chown avantp:avantp "$DATA"/* && chmod 600 "$DATA"/tls.key "$DATA"/users.json 2>/dev/null || true
+find "$DATA" -maxdepth 1 -type f -exec chown avantp:avantp {} +          # regular files only: chown follows symlinks
+for f in tls.key users.json; do
+  if [ -f "$DATA/$f" ] && [ ! -L "$DATA/$f" ]; then chmod 600 "$DATA/$f"; fi
+done
 
 # ---- the password tool
 cat > /usr/local/sbin/avantp-passwd <<'WRAP'
