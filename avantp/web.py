@@ -23,6 +23,14 @@ CSP = ("default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'self' 'u
 MAX_BODY = 256 * 1024
 
 
+def version():
+    try:
+        with open(os.path.join(os.path.dirname(UI_DIR), "VERSION")) as f:
+            return f.read().strip()[:40] or "unknown"
+    except OSError:
+        return "unknown"
+
+
 class App:
     def __init__(self, data_dir, tls, etc_dir=None, run_dir=None):
         self.dir = data_dir
@@ -112,7 +120,7 @@ def make_handler(app):
                     return self.send(200, f.read(), ctype)
             tok, s = self.session()
             if path == "/api/session":
-                return self.send(200, {"user": s["user"], "csrf": s["csrf"]} if s else {"user": None,
+                return self.send(200, {"user": s["user"], "csrf": s["csrf"], "version": version()} if s else {"user": None,
                                  "needs_setup": not app.users.any()})
             if not s:
                 return self.err(401, "login required")
@@ -145,7 +153,7 @@ def make_handler(app):
                     app.sessions.fail(ip)
                     return self.err(401, "wrong user or password")
                 tok, csrf = app.sessions.create(u)
-                return self.send(200, {"user": u, "csrf": csrf}, extra=[self.cookie(tok, auth.SESSION_TTL)])
+                return self.send(200, {"user": u, "csrf": csrf, "version": version()}, extra=[self.cookie(tok, auth.SESSION_TTL)])
             tok, s = self.session()
             if not s:
                 return self.err(401, "login required")

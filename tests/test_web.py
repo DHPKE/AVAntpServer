@@ -123,6 +123,14 @@ class WebTest(unittest.TestCase):
         os.unlink(os.path.join(self.dir, "confirm"))
         os.unlink(os.path.join(self.dir, "status.json"))
 
+    def test_version_is_reported_after_login(self):
+        st, d, _ = self.req("POST", "/api/login", {"user": "admin", "password": "correct horse battery"})
+        self.assertIn("version", d)
+        _, ck, csrf = self.login()
+        st, d, _ = self.req("GET", "/api/session", cookie=ck)
+        self.assertEqual(d["version"], web.version())
+        self.assertNotIn("version", self.req("GET", "/api/session")[1])     # nothing leaks before login
+
     def test_logout(self):
         _, ck, csrf = self.login()
         self.assertEqual(self.req("POST", "/api/logout", {}, cookie=ck, csrf=csrf)[0], 200)

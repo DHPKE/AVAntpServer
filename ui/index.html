@@ -221,6 +221,9 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
 
   <!-- SYSTEM -->
   <div class="sform" v-if="tab==='system'">
+    <div class="card"><div class="lbl">About</div>
+      <div class="cr"><span class="ck">Installed version</span><span class="cv">{{ version || 'unknown' }}</span></div>
+      <div class="smeta" style="text-align:left;margin-top:8px">Update on the box: <b>sudo ./deploy/update.sh</b> in the git clone.</div></div>
     <div class="card"><div class="lbl">Change password ({{ user }})</div>
       <form @submit.prevent="changePw">
         <div class="sf"><label class="slbl">Current</label><input type="password" v-model="pw.old" autocomplete="current-password"></div>

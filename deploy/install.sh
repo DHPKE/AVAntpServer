@@ -44,6 +44,13 @@ install -d -o avantp -g avantp -m 750 "$DATA"
 install -d -m 755 /etc/avantp
 rm -rf /opt/avantp && mkdir /opt/avantp
 cp -r "$SRC/avantp" "$SRC/ui" /opt/avantp/
+# which code is this? git hash when run from a clone, else the VERSION file that came with a copy
+if [ -d "$SRC/.git" ] && command -v git >/dev/null 2>&1; then
+  V=$(git -c safe.directory="$SRC" -C "$SRC" describe --always --dirty 2>/dev/null) || V=""
+fi
+[ -n "${V:-}" ] || V=$(cat "$SRC/VERSION" 2>/dev/null || echo "unknown")
+echo "$V" > /opt/avantp/VERSION
+echo "installing version $V"
 find /opt/avantp -name __pycache__ -prune -exec rm -rf {} +
 chown -R root:root /opt/avantp && chmod -R go-w /opt/avantp
 
@@ -99,5 +106,5 @@ if [ -n "$SD" ]; then
   sleep 1
   systemctl is-active avantp-web.service avantp-apply.path
 fi
-echo "installed: $(chronyd --version | head -1 | cut -c1-30), $(nft --version)"
+echo "installed version $V: $(chronyd --version | head -1 | cut -c1-30), $(nft --version)"
 echo "WebUI: https://$(hostname -I | awk '{print $1}'):8443   (network and firewall are unchanged until you APPLY)"

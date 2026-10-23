@@ -3,7 +3,7 @@ const {createApp, ref, reactive, computed, watch, onMounted, onUnmounted} = Vue
 createApp({setup() {
   const tabs = ['monitor', 'network', 'vlans', 'ntp', 'system']
   const tab = ref('monitor')
-  const user = ref(null), csrf = ref(''), needsSetup = ref(false)
+  const user = ref(null), csrf = ref(''), needsSetup = ref(false), version = ref('')
   const lu = ref(''), lp = ref(''), loginErr = ref(''), busy = ref(false)
   const connected = ref(false), status = ref(null), skew = ref(0), now = ref(Date.now())
   const cfg = ref({active: null, pending: null}), ap = ref({state: 'idle'})
@@ -24,7 +24,7 @@ createApp({setup() {
   // ---- session
   async function start() {
     const s = await fetch('/api/session').then(r => r.json())
-    user.value = s.user; csrf.value = s.csrf || ''; needsSetup.value = !!s.needs_setup
+    user.value = s.user; csrf.value = s.csrf || ''; needsSetup.value = !!s.needs_setup; version.value = s.version || ''
     if (user.value) await afterLogin()
   }
   async function afterLogin() {
@@ -37,7 +37,7 @@ createApp({setup() {
     busy.value = true; loginErr.value = ''
     try {
       const d = await api('POST', '/api/login', {user: lu.value, password: lp.value})
-      user.value = d.user; csrf.value = d.csrf; lp.value = ''
+      user.value = d.user; csrf.value = d.csrf; version.value = d.version || ''; lp.value = ''
       await afterLogin()
     } catch (e) { loginErr.value = e.message } finally { busy.value = false }
   }
@@ -208,7 +208,7 @@ createApp({setup() {
 
   onMounted(start)
   onUnmounted(stop)
-  return {tabs, tab, user, needsSetup, lu, lp, loginErr, busy, connected, doLogin, doLogout, draft, up, msg, msgCls, pw,
+  return {version, tabs, tab, user, needsSetup, lu, lp, loginErr, busy, connected, doLogin, doLogout, draft, up, msg, msgCls, pw,
     ap, left, recent, applyNow, confirm, cfg, shown, tr, chronyRunning, sources, ifaces, ifaceNames, syncCls, syncTxt, syncIcon, syncName, fmtS, off, offCls, utcNow,
     tzLabel, tzGroups, localTime, tcText, vlanAddr, cfgVlans, hasPending, draftDirty, wanDns, addVlan, save, changePw}
 }}).mount('#app')
