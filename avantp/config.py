@@ -1,0 +1,106 @@
+"""Load and validate the appliance config. Everything that ends up in a generated file passes through here."""
+import ipaddress
+import json
+import re
+
+IFACE_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,14}$")
+NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+HOST_RE = re.compile(r"^(?=.{1,253}$)([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$")
+FRAME_RATES = (24, 25, 29.97, 30)
+
+
+class ConfigError(ValueError):
+    pass
+
+
+def _need(cond, msg):
+    if not cond:
+        raise ConfigError(msg)
+
+
+def _host(h, where):
+    _need(isinstance(h, str) and HOST_RE.match(h), f"{where}: invalid host {h!r}")
+    return h
+
+
+def _net(cidr, where):
+    try:
+        return ipaddress.ip_interface(cidr)
+    except ValueError:
+        raise ConfigError(f"{where}: invalid address {cidr!r}")
+
+
+def validate(cfg):
+    """Return a normalised copy of cfg or raise ConfigError."""
+    _need(isinstance(cfg, dict), "config must be an object")
+    wan = cfg.get("wan", {})
+    lan = cfg.get("lan", {})
+    _need(IFACE_RE.match(wan.get("iface", "")), "wan.iface invalid")
+    _need(IFACE_RE.match(lan.get("iface", "")), "lan.iface invalid")
+    _need(wan["iface"] != lan["iface"], "wan.iface and lan.iface must differ")
+
+    wan.setdefault("mode", "dhcp")
+    _need(wan["mode"] in ("dhcp", "static"), "wan.mode must be dhcp or static")
+    wan_net = None
+    if wan["mode"] == "static":
+        wan_net = _net(wan.get("address"), "wan.address")
+        _need(wan_net.version == 4, "wan.address must be IPv4")
+        gw = ipaddress.ip_address(wan.get("gateway", ""))
+        _need(gw in wan_net.network, "wan.gateway not inside wan.address network")
+        wan["dns"] = [str(ipaddress.ip_address(d)) for d in wan.get("dns", [])]
+
+    up = cfg.setdefault("upstream", {})
+    for k in ("default", "backup", "custom"):
+        up.setdefault(k, [])
+        _need(isinstance(up[k], list), f"upstream.{k} must be a list")
+        up[k] = [_host(h, f"upstream.{k}") for h in up[k]]
+    _need(up["default"] or up["backup"] or up["custom"], "at least one upstream NTP source required")
+    up.setdefault("local_fallback", False)
+
+    vlans = cfg.get("vlans", [])
+    _need(vlans, "at least one VLAN required")
+    ids, names, nets = set(), set(), []
+    for v in vlans:
+        vid = v.get("id")
+        _need(isinstance(vid, int) and 1 <= vid <= 4094, f"vlan id {vid!r} out of range")
+        _need(vid not in ids, f"duplicate vlan id {vid}")
+        ids.add(vid)
+        _need(NAME_RE.match(v.get("name", "")), f"vlan {vid}: invalid name")
+        _need(v["name"] not in names, f"duplicate vlan name {v['name']}")
+        names.add(v["name"])
+        v.setdefault("mode", "dhcp")
+        _need(v["mode"] in ("dhcp", "static"), f"vlan {vid}: mode must be dhcp or static")
+        if v["mode"] == "static":
+            ifc = _net(v.get("address"), f"vlan {vid}.address")
+            _need(ifc.version == 4, f"vlan {vid}: IPv4 only")
+            _need(ifc.network.prefixlen <= 30, f"vlan {vid}: prefix too long")
+            _need(ifc.ip not in (ifc.network.network_address, ifc.network.broadcast_address),
+                  f"vlan {vid}: address is network/broadcast address")
+            for other_id, other in nets:
+                _need(not ifc.network.overlaps(other), f"vlan {vid} subnet overlaps vlan {other_id}")
+            if wan_net:
+                _need(not ifc.network.overlaps(wan_net.network), f"vlan {vid} subnet overlaps WAN")
+            nets.append((vid, ifc.network))
+            v["_if"] = ifc
+        off = v.setdefault("utc_offset_min", 0)
+        _need(isinstance(off, int) and -720 <= off <= 840 and off % 15 == 0,
+              f"vlan {vid}: utc_offset_min must be a multiple of 15 in -720..840")
+        v.setdefault("ntp", True)
+        v.setdefault("mgmt", False)
+        tc = v.setdefault("timecode", {})
+        tc.setdefault("artnet", False)
+        tc.setdefault("mtc_rtp", False)
+        tc.setdefault("fps", 25)
+        _need(tc["fps"] in FRAME_RATES, f"vlan {vid}: timecode.fps must be one of {FRAME_RATES}")
+        v["iface"] = f"{lan['iface']}.{vid}"
+    _need(any(v["mgmt"] for v in vlans), "at least one VLAN must have mgmt=true (WebUI/SSH access)")
+    web = cfg.setdefault("webui", {})
+    web.setdefault("port", 8443)
+    _need(isinstance(web["port"], int) and 1024 <= web["port"] <= 65535, "webui.port invalid")
+    cfg["wan"], cfg["lan"] = wan, lan
+    return cfg
+
+
+def load(path):
+    with open(path) as f:
+        return validate(json.load(f))

@@ -1,0 +1,15 @@
+{
+  "wan": {"iface": "eth0", "mode": "dhcp"},
+  "lan": {"iface": "eth1"},
+  "upstream": {
+    "default": ["pool.ntp.org"],
+    "backup": ["time.cloudflare.com"],
+    "custom": []
+  },
+  "vlans": [
+    {"id": 10, "name": "mgmt", "mode": "static", "address": "10.10.10.2/24", "mgmt": true, "utc_offset_min": 60},
+    {"id": 20, "name": "show", "mode": "static", "address": "10.20.0.2/24", "utc_offset_min": 60,
+     "timecode": {"artnet": true, "fps": 25}},
+    {"id": 30, "name": "guest-site", "mode": "dhcp", "utc_offset_min": -300}
+  ]
+}
