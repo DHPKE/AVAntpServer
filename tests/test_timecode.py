@@ -128,12 +128,92 @@ class AddressTest(unittest.TestCase):
             {"ifname": "x", "addr_info": [{"family": "inet6", "local": "fe80::1", "prefixlen": 64}]}])
         with mock.patch("avantp.timecode.subprocess.run", return_value=mock.Mock(stdout=js)):
             a = tcm.vlan_addresses()
-        self.assertEqual(a["enp3s0.20"], ("10.20.0.2", "10.20.0.255"))                   # derived
-        self.assertEqual(a["enp3s0.30"], ("10.3.10.1", "10.3.31.255"))                   # as reported
+        self.assertEqual(a["enp3s0.20"], ("10.20.0.2", "10.20.0.255", "10.20.0.0/24"))   # broadcast derived
+        self.assertEqual(a["enp3s0.30"], ("10.3.10.1", "10.3.31.255", "10.3.0.0/19"))    # as reported; network from the prefix
         self.assertNotIn("ppp0", a)                                                       # a /32 has no broadcast
         self.assertNotIn("x", a)
         with mock.patch("avantp.timecode.subprocess.run", side_effect=FileNotFoundError):
             self.assertEqual(tcm.vlan_addresses(), {})
+
+
+class UnicastTest(unittest.TestCase):
+    """Art-Net to one receiver instead of a broadcast."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.cfg = os.path.join(self.dir, "c.json")
+        self.rx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.rx.bind(("127.0.0.1", 0))
+        self.rx.settimeout(0.05)
+        self.sent = []
+
+    def tearDown(self):
+        self.rx.close()
+
+    def write(self, dest, tz="UTC"):
+        c = copy.deepcopy(BASE)
+        for v in c["vlans"]:
+            v["timecode"] = {"artnet": False, "mtc_rtp": False, "fps": 25}
+        c["vlans"][1]["timecode"] = {"artnet": True, "mtc_rtp": False, "fps": 25, "artnet_dest": dest}
+        json.dump(config.dump(config.validate(c)), open(self.cfg, "w"))
+
+    def sender(self, addresses):
+        s = tcm.Sender(self.cfg, os.path.join(self.dir, "s.json"), addresses=lambda: addresses)
+        # capture what would be sent and where, without a real network
+        class FakeSock:
+            def sendto(inner, data, addr):
+                self.sent.append((addr, data))
+            def close(inner): pass
+        s._socket = lambda ip: FakeSock()
+        return s
+
+    def run_for(self, s, secs=0.3):
+        end = time.time() + secs
+        while time.time() < end:
+            s.tick()
+            time.sleep(0.004)
+        s.write_status(force=True)
+        return [x for x in json.load(open(os.path.join(self.dir, "s.json")))["vlans"] if x["id"] == 20][0]["artnet"]
+
+    def test_unicast_goes_to_that_address_only(self):
+        self.write("10.20.0.50")
+        a = self.run_for(self.sender({"enp3s0.20": ("10.20.0.2", "10.20.0.255", "10.20.0.0/24")}))
+        self.assertGreater(len(self.sent), 3)
+        self.assertEqual({addr for addr, _ in self.sent}, {("10.20.0.50", 6454)})        # never the broadcast address
+        self.assertEqual(a["state"], "sending")
+        self.assertEqual(a["dest"], "10.20.0.50:6454 (unicast)")
+        self.assertEqual(self.sent[0][1][:10], b"Art-Net\x00\x00\x97")                      # still a normal ArtTimeCode packet
+
+    def test_broadcast_is_still_the_default_and_says_so(self):
+        self.write("broadcast")
+        a = self.run_for(self.sender({"enp3s0.20": ("10.20.0.2", "10.20.0.255", "10.20.0.0/24")}))
+        self.assertEqual({addr for addr, _ in self.sent}, {("10.20.0.255", 6454)})
+        self.assertEqual(a["dest"], "10.20.0.255:6454 (broadcast)")
+
+    def test_a_destination_off_the_vlan_is_refused_not_sent(self):
+        # a DHCP VLAN: the subnet is only known at run time. 8.8.8.8 would leave through the WAN's default route
+        c = copy.deepcopy(BASE)
+        c["vlans"][2]["timecode"] = {"artnet": True, "mtc_rtp": False, "fps": 25, "artnet_dest": "8.8.8.8"}   # VLAN 30 is DHCP
+        json.dump(config.dump(config.validate(c)), open(self.cfg, "w"))
+        s = self.sender({"enp3s0.30": ("10.3.10.1", "10.3.31.255", "10.3.0.0/19")})
+        end = time.time() + 0.3
+        while time.time() < end:
+            s.tick()
+            time.sleep(0.004)
+        s.write_status(force=True)
+        a = [x for x in json.load(open(os.path.join(self.dir, "s.json")))["vlans"] if x["id"] == 30][0]["artnet"]
+        self.assertEqual(self.sent, [])                                                 # nothing at all went out
+        self.assertEqual(a["state"], "error")
+        self.assertIn("not on this VLAN's network 10.3.0.0/19", a["error"])
+        # ... and it recovers by itself once the receiver is on the VLAN
+        c["vlans"][2]["timecode"]["artnet_dest"] = "10.3.5.5"
+        json.dump(config.dump(config.validate(c)), open(self.cfg, "w"))
+        os.utime(self.cfg, (time.time() + 5, time.time() + 5))
+        end = time.time() + 0.3
+        while time.time() < end:
+            s.tick()
+            time.sleep(0.004)
+        self.assertEqual({addr for addr, _ in self.sent}, {("10.3.5.5", 6454)})
 
 
 class SenderTest(unittest.TestCase):

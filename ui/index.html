@@ -226,7 +226,7 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
   <template v-if="tab==='vlans' && draft">
   <div class="grid"><div class="card full">
     <div class="lbl">VLANs on {{ draft.lan.iface }} ({{ draft.vlans.length }} / 20)</div>
-    <table><thead><tr><th>ID</th><th>Name</th><th>Addressing</th><th>Address / prefix</th><th>Time zone</th><th>NTP</th><th>Mgmt</th><th>Art-Net TC</th><th>MTC-RTP</th><th>FPS</th><th></th></tr></thead>
+    <table><thead><tr><th>ID</th><th>Name</th><th>Addressing</th><th>Address / prefix</th><th>Time zone</th><th>NTP</th><th>Mgmt</th><th>Art-Net TC</th><th>Art-Net to</th><th>MTC-RTP</th><th>FPS</th><th></th></tr></thead>
     <tbody><tr v-for="(v,i) in draft.vlans" :key="i">
       <td><input type="number" min="1" max="4094" v-model.number="v.id" style="width:72px"></td>
       <td><input type="text" v-model="v.name" maxlength="32" style="width:150px" title="Letters, digits, space, - _ . ( ) - up to 32 characters"></td>
@@ -237,11 +237,15 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
       <td><input type="checkbox" v-model="v.ntp"></td>
       <td><input type="checkbox" v-model="v.mgmt"></td>
       <td><input type="checkbox" v-model="v.timecode.artnet"></td>
+      <td style="min-width:150px;width:150px"><template v-if="v.timecode.artnet">
+        <select v-model="v.timecode.dest_mode" title="Broadcast reaches every receiver on the VLAN; unicast sends to one receiver only" style="width:136px;min-width:0"><option value="broadcast">Broadcast</option><option value="unicast">Unicast to&hellip;</option></select>
+        <input v-if="v.timecode.dest_mode==='unicast'" type="text" v-model="v.timecode.dest_ip" placeholder="10.20.0.50" title="IP address of the receiver, on this VLAN" style="width:136px;min-width:0;margin-top:4px"></template>
+        <span v-else style="color:var(--muted)">&ndash;</span></td>
       <td><input type="checkbox" v-model="v.timecode.mtc_rtp"></td>
       <td><select v-model.number="v.timecode.fps"><option>24</option><option>25</option><option>29.97</option><option>30</option></select></td>
       <td><button class="btn ghost" @click="draft.vlans.splice(i,1)">✕</button></td></tr></tbody></table>
     <div style="margin-top:12px"><button class="btn ghost" :disabled="draft.vlans.length>=20" @click="addVlan">+ ADD VLAN</button></div>
-    <div class="smeta" style="text-align:left;margin-top:10px">Timecode outputs are off by default. The time zone (pick a city, daylight saving is automatic) sets the VLAN's local time and timecode; NTP itself always carries UTC. DHCP VLANs never accept routes, DNS or NTP from the server.</div>
+    <div class="smeta" style="text-align:left;margin-top:10px">Timecode outputs are off by default. Art-Net goes out as a broadcast on the VLAN or as unicast to one receiver on that VLAN's own network. The time zone (pick a city, daylight saving is automatic) sets the VLAN's local time and timecode; NTP itself always carries UTC. DHCP VLANs never accept routes, DNS or NTP from the server.</div>
   </div></div>
   <div class="sst" :class="msgCls" v-if="msg">{{ msg }}</div>
   <div class="actions"><button class="btn" :disabled="busy" @click="save">SAVE</button></div>

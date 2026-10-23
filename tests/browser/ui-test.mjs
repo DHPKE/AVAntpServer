@@ -91,9 +91,28 @@ await ev(`(()=>{const r=document.querySelectorAll('tbody tr');
  set(c(r[0],4),'10.10.10.2/24'); set(c(r[0],5),'Europe/Berlin'); if(!c(r[0],7,'input').checked) c(r[0],7,'input').click();
  set(c(r[1],1),20); set(c(r[1],2),'show'); set(c(r[1],5),'America/New_York'); c(r[1],8,'input').click(); return 1})()`)
 await sleep(300)
+// Art-Net destination: broadcast, or unicast to one receiver on the VLAN
+const dest = () => ev(`(() => { const r = [...document.querySelectorAll('tbody tr')]; const c = i => r[i].querySelector('td:nth-child(9)'); return {sel: !!c(1).querySelector('select'), ip: !!c(1).querySelector('input'), off: c(0).textContent.trim()} })()`)
+let d9 = await dest()
+check('Art-Net to: the broadcast/unicast choice appears once Art-Net TC is ticked, and not where it is off', d9.sel && !d9.ip && d9.off === '–', JSON.stringify(d9))
+await ev(`(() => { const sel = document.querySelectorAll('tbody tr')[1].querySelector('td:nth-child(9) select'); sel.value = 'unicast'; sel.dispatchEvent(new Event('change')) })()`); await sleep(250)
+d9 = await dest()
+check('... choosing unicast shows the receiver address field', d9.ip === true, JSON.stringify(d9))
+const setIp = v => ev(`(() => { const i = document.querySelectorAll('tbody tr')[1].querySelector('td:nth-child(9) input'); i.value = ${JSON.stringify(v)}; i.dispatchEvent(new Event('input')) })()`)
+await setIp('not-an-ip'); await click('.actions .btn'); await sleep(800)
+check('... a wrong address is refused with a clear message', (await text()).includes('not an IPv4 address'), (await text()).slice(-200))
+await setIp('10.20.0.50')
+const fit = await ev(`(() => { const r = document.querySelectorAll('tbody tr')[1]; const box = e => e.getBoundingClientRect();
+  const cell = box(r.querySelector('td:nth-child(9)')), sel = box(r.querySelector('td:nth-child(9) select')), inp = box(r.querySelector('td:nth-child(9) input'));
+  const next = box(r.querySelector('td:nth-child(10) input')), after = box(r.querySelector('td:nth-child(11) select'));
+  const hit = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+  return {cell: [cell.left, cell.right].map(Math.round), sel: [sel.left, sel.right].map(Math.round), inp: [inp.left, inp.right].map(Math.round),
+          inside: sel.right <= cell.right + 1 && inp.right <= cell.right + 1 && sel.left >= cell.left - 1, overlapsMtc: hit(inp, next) || hit(sel, next), overlapsFps: hit(inp, after) || hit(sel, after)} })()`)
+check('Art-Net to: dropdown and address field stay inside their column and cover no neighbouring control', fit.inside && !fit.overlapsMtc && !fit.overlapsFps, JSON.stringify(fit))
 await shot('4-vlans')
 await click('.actions .btn'); await sleep(900)
 t = await text(); check('names with spaces are accepted and saved', !(await text()).includes('invalid name'), (await text()).slice(-200))
+check('the unicast destination was saved as that one address', await ev(`fetch('/api/config').then(r => r.json()).then(d => d.pending.vlans.find(v => v.id === 20).timecode.artnet_dest)`) === '10.20.0.50')
 check('save OK message', t.includes('Saved. Press APPLY TO SYSTEM'), t.slice(-200))
 check('saved-but-not-active banner with APPLY button', t.includes('not active on the system yet') && t.includes('APPLY TO SYSTEM'))
 

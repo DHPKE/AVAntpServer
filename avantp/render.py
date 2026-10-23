@@ -102,7 +102,8 @@ def nftables(cfg):
             outp.append(f'    oifname "{i}" udp sport 68 udp dport 67 accept')
         tc = v["timecode"]
         if tc["artnet"]:
-            outp.append(f'    oifname "{i}" udp dport 6454 accept')
+            only = "" if tc["artnet_dest"] == "broadcast" else f" ip daddr {tc['artnet_dest']}"   # unicast: this one address
+            outp.append(f'    oifname "{i}"{only} udp dport 6454 accept')
         if tc["mtc_rtp"]:
             inp.append(f'    iifname "{i}" udp dport {{ 5004, 5005 }} accept')
             outp.append(f'    oifname "{i}" udp dport {{ 5004, 5005 }} accept')

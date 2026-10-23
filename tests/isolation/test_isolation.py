@@ -225,13 +225,22 @@ for dev in ("lan0.10", "lan0.20"):
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.setsockopt(socket.SOL_SOCKET, 25, dev.encode() + b"\0")          # SO_BINDTODEVICE: one socket per VLAN
+    s.setsockopt(socket.IPPROTO_IP, socket.IP_PKTINFO, 1)               # tells us the destination address of each packet
     s.bind(("", 6454)); s.settimeout(0.05); socks[dev] = s
 got = {d: [] for d in socks}
+dst = {d: {} for d in socks}
 end = time.time() + float(sys.argv[1])
 while time.time() < end:
     for d, s in socks.items():
-        try: got[d].append(s.recv(100).hex())
-        except socket.timeout: pass
+        try:
+            data, anc, _, _ = s.recvmsg(100, 100)
+        except socket.timeout:
+            continue
+        got[d].append(data.hex())
+        for lvl, typ, a in anc:
+            if lvl == socket.IPPROTO_IP and typ == socket.IP_PKTINFO:
+                ip = socket.inet_ntoa(a[8:12]); dst[d][ip] = dst[d].get(ip, 0) + 1
+got["dst"] = dst
 print(json.dumps(got))
 '''
 
@@ -262,9 +271,56 @@ def artnet_tests(check, root):
     check("artnet: VLAN 10 sender is ON but its firewall rule is OFF: nothing gets out", len(out["lan0.10"]), 0)
     st = {v["id"]: v["artnet"] for v in status["vlans"]}
     check("artnet: status says sending on VLAN 20", st[20]["state"], "sending")
-    check("artnet: status shows the subnet broadcast as destination", st[20]["dest"], "10.20.0.255:6454")
+    check("artnet: status shows the subnet broadcast as destination", st[20]["dest"], "10.20.0.255:6454 (broadcast)")
     check("artnet: status does not claim success on VLAN 10 forever (the packets left the sender, the kernel dropped them)",
           st[10]["state"] in ("sending", "error"), True)
+    check("artnet: broadcast mode: the packets are addressed to the VLAN's broadcast address",
+          out["dst"]["lan0.20"], {"10.20.0.255": len(p20)})
+    unicast_tests(check, cfg_dir)
+
+
+def unicast_tests(check, d_cfg):
+    print("--- Art-Net unicast: to one receiver, pinned in the firewall")
+    d = tempfile.mkdtemp()
+    uni = copy.deepcopy(CFG)
+    uni["vlans"][1]["timecode"] = {"artnet": True, "fps": 25, "artnet_dest": "10.20.0.10"}
+    load(uni, d)                                                       # the firewall now allows exactly 10.20.0.10 on VLAN 20
+    json.dump(config.dump(config.validate(uni)), open(f"{d_cfg}/config.json", "w"))
+    rx = subprocess.Popen(["ip", "netns", "exec", "lanhost", "python3", "/tmp/receiver.py", "3.5"], stdout=subprocess.PIPE, text=True)
+    wan_code = ("import socket, time\n"
+                "s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.bind(('', 6454)); s.settimeout(0.05); n = 0; e = time.time() + 3.5\n"
+                "while time.time() < e:\n"
+                "    try:\n        s.recv(100); n += 1\n    except socket.timeout:\n        pass\n"
+                "print(n)\n")
+    wan = subprocess.Popen(["ip", "netns", "exec", "wanpeer", "python3", "-c", wan_code], stdout=subprocess.PIPE, text=True)
+    time.sleep(0.4)
+    code = ("import sys, socket, time\n"
+            "sys.path.insert(0, '/work')\n"
+            "from avantp import timecode as t\n"
+            f"s = t.Sender('{d_cfg}/config.json', '{d_cfg}/status.json'); end = time.time() + 2.0\n"
+            "while time.time() < end:\n    s.tick(); time.sleep(0.004)\n"
+            "s.write_status(force=True)\n"
+            # a buggy or hostile sender: plain packets to addresses the config does not name, from the VLAN's own address
+            "def raw(dst, n=6, src='10.20.0.2'):\n"
+            "    x = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); x.bind((src, 0))\n"
+            "    x.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)\n"
+            "    for _ in range(n):\n"
+            "        try:\n            x.sendto(b'stray', (dst, 6454))\n        except OSError:\n            pass\n"
+            "for dst in ('10.20.0.99', '10.20.0.255', '10.99.0.1'):\n    raw(dst)\n")
+    r = subprocess.run(["ip", "netns", "exec", "box", "python3", "-c", code], capture_output=True, text=True)
+    out = json.loads(rx.communicate(timeout=10)[0])
+    wan_n = int(wan.communicate(timeout=10)[0])
+    st = {v["id"]: v["artnet"] for v in json.load(open(f"{d_cfg}/status.json"))["vlans"]}
+    pk = [bytes.fromhex(h) for h in out["lan0.20"]]
+    art = [p for p in pk if p[:8] == b"Art-Net\x00"]
+    check("unicast: sender ran without errors", r.returncode, 0)
+    check("unicast: the receiver on VLAN 20 gets the timecode (about 25 packets/s for 2 s)", 40 <= len(art) <= 55, True)
+    check("unicast: ... addressed to the receiver itself, not to the broadcast address", out["dst"]["lan0.20"].get("10.20.0.10"), len(pk))
+    check("unicast: ... status says unicast to that address", st[20]["dest"], "10.20.0.10:6454 (unicast)")
+    check("unicast: stray packets to another host on the VLAN (10.20.0.99) are blocked by the firewall", out["dst"]["lan0.20"].get("10.20.0.99"), None)
+    check("unicast: ... and so are stray broadcasts now that the broadcast allowance is gone", out["dst"]["lan0.20"].get("10.20.0.255"), None)
+    check("unicast: a packet aimed at the WAN side (10.99.0.1:6454) never arrives there", wan_n, 0)
+    check("unicast: nothing goes to VLAN 10 at all", len(out["lan0.10"]), 0)
 
 
 def helper_tests(check, listener_ok):

@@ -116,6 +116,22 @@ def validate(cfg):
         tc.setdefault("mtc_rtp", False)
         tc.setdefault("fps", 25)
         _need(tc["fps"] in FRAME_RATES, f"vlan {vid}: timecode.fps must be one of {FRAME_RATES}")
+        # Art-Net goes out as a broadcast on the VLAN, or as unicast to one receiver on that VLAN
+        dest = tc.setdefault("artnet_dest", "broadcast")
+        _need(isinstance(dest, str), f"vlan {vid}: timecode.artnet_dest must be 'broadcast' or an IPv4 address")
+        dest = tc["artnet_dest"] = "broadcast" if dest.strip().lower() in ("", "broadcast") else dest.strip()
+        if dest != "broadcast":
+            try:
+                ip = ipaddress.ip_address(dest)
+            except ValueError:
+                raise ConfigError(f"vlan {vid}: Art-Net destination {dest!r} is not an IPv4 address (or 'broadcast')")
+            _need(ip.version == 4 and not (ip.is_multicast or ip.is_loopback or ip.is_unspecified or ip.is_link_local
+                                           or ip.is_reserved), f"vlan {vid}: Art-Net destination {dest} must be a normal unicast IPv4 address")
+            if v["mode"] == "static":              # the LAN side has no gateway: the receiver has to be on this VLAN
+                net = v["_if"].network
+                _need(ip in net, f"vlan {vid}: Art-Net destination {dest} is not on this VLAN's network {net}")
+                _need(ip not in (v["_if"].ip, net.network_address, net.broadcast_address),
+                      f"vlan {vid}: Art-Net destination {dest} is this box or the network/broadcast address; use 'broadcast' for that")
         v["iface"] = f"{lan['iface']}.{vid}"
     _need(wan["commissioning"] or any(v["mgmt"] for v in vlans),
           "at least one VLAN must have mgmt=true (WebUI/SSH access), or enable wan.commissioning")

@@ -56,8 +56,8 @@ def fmt(tc):
 
 
 def vlan_addresses():
-    """{interface: (ipv4, broadcast)} from the kernel. The broadcast address is worked out from address and prefix when
-    the kernel has none recorded for the address."""
+    """{interface: (ipv4, broadcast, network)} from the kernel. The broadcast address is worked out from address and
+    prefix when the kernel has none recorded for the address."""
     try:
         data = json.loads(subprocess.run(["ip", "-j", "-4", "addr"], capture_output=True, text=True, timeout=3).stdout or "[]")
     except (OSError, ValueError, subprocess.TimeoutExpired):
@@ -67,14 +67,15 @@ def vlan_addresses():
         for a in i.get("addr_info", []):
             if a.get("family") != "inet" or "local" not in a:
                 continue
+            try:
+                ifc = ipaddress.ip_interface(f"{a['local']}/{a.get('prefixlen', 32)}")
+            except ValueError:
+                continue
             bcast = a.get("broadcast")
-            if not bcast and 0 <= a.get("prefixlen", 32) <= 30:
-                try:
-                    bcast = str(ipaddress.ip_interface(f"{a['local']}/{a['prefixlen']}").network.broadcast_address)
-                except ValueError:
-                    bcast = None
+            if not bcast and ifc.network.prefixlen <= 30:
+                bcast = str(ifc.network.broadcast_address)
             if bcast:
-                out[i["ifname"]] = (a["local"], bcast)
+                out[i["ifname"]] = (a["local"], bcast, str(ifc.network))
     return out
 
 
@@ -112,7 +113,7 @@ class Sender:
             on = v["timecode"]["artnet"]
             o = dict(old) if old else {"sent": 0, "last": None, "next": 0, "sock": None, "error": None}
             o.update(name=v["name"], iface=v["iface"], tz=v["timezone"], fps=v["timecode"]["fps"],
-                     artnet=on, mtc=v["timecode"]["mtc_rtp"])
+                     artnet=on, mtc=v["timecode"]["mtc_rtp"], to=v["timecode"]["artnet_dest"])
             keep[v["id"]] = o
         for vid, o in self.outputs.items():
             if vid not in keep and o.get("sock"):
@@ -152,9 +153,9 @@ class Sender:
                 self._state(vid, o, "off")
                 continue
             rate = FRAME_RATE[o["fps"]]
-            local_ip, bcast = self.addr.get(o["iface"], (None, None))
+            local_ip, bcast, net = (tuple(self.addr.get(o["iface"], ())) + (None, None, None))[:3]
             if self.dest_override:
-                local_ip, bcast = self.dest_override[0], self.dest_override[1]
+                local_ip, bcast, net = self.dest_override[0], self.dest_override[1], None
             if not local_ip:
                 o["error"], o["dest"] = None, None
                 o["state"] = "no-address"
@@ -169,7 +170,15 @@ class Sender:
                     o["sock"], o["error"], o["state"] = None, str(e), "error"
                     self._state(vid, o, "error", f"(cannot open a socket on {local_ip}: {e})")
                     continue
-            o["dest"] = f"{bcast}:{ARTNET_PORT}" if not self.dest_override else f"{bcast}:{self.dest_override[2]}"
+            unicast = o["to"] != "broadcast" and not self.dest_override
+            target = o["to"] if unicast else bcast
+            if unicast and net and ipaddress.ip_address(target) not in ipaddress.ip_network(net):
+                # the LAN side has no gateway and no route off the VLAN: refuse instead of letting it leave by another interface
+                o["error"], o["state"], o["dest"] = f"{target} is not on this VLAN's network {net}", "error", None
+                self._state(vid, o, "error", f"(destination {target} is not on this VLAN's network {net}; nothing is sent)")
+                continue
+            o["dest"] = (f"{target}:{ARTNET_PORT} (unicast)" if unicast else
+                         f"{target}:{ARTNET_PORT} (broadcast)" if not self.dest_override else f"{bcast}:{self.dest_override[2]}")
             if o["next"] == 0 or t - o["next"] > 1.0:          # first frame, or we fell behind: realign
                 o["next"] = (int(t * rate) + 1) / rate
             while o["next"] <= t:
@@ -178,7 +187,7 @@ class Sender:
                 tc = timecode_at(o["next"] + 1e-4, o["tz"], o["fps"])
                 try:
                     port = self.dest_override[2] if self.dest_override else ARTNET_PORT
-                    o["sock"].sendto(artnet_packet(*tc, o["fps"]), (bcast, port))
+                    o["sock"].sendto(artnet_packet(*tc, o["fps"]), (target if not self.dest_override else bcast, port))
                     o["sent"] += 1
                     o["last"], o["error"], o["state"] = fmt(tc), None, "sending"
                     self._state(vid, o, "sending", f"{o['fps']} fps, zone {o['tz']}, to {o['dest']}")

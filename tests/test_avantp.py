@@ -181,6 +181,38 @@ class Render(unittest.TestCase):
         c["wan"]["commissioning"] = True
         self.assertIn('iifname "enp4s0" tcp dport { 22, 8443 } accept', render.nftables(config.validate(c)))
 
+    def test_artnet_destination_validation(self):
+        def with_dest(dest, vlan=1):
+            c = copy.deepcopy(BASE)
+            c["vlans"][vlan]["timecode"] = {"artnet": True, "mtc_rtp": False, "fps": 25, "artnet_dest": dest}
+            return c
+        # VLAN 20 is 10.20.0.2/24 (static)
+        self.assertEqual(config.validate(with_dest("broadcast"))["vlans"][1]["timecode"]["artnet_dest"], "broadcast")
+        self.assertEqual(config.validate(with_dest(" BROADCAST "))["vlans"][1]["timecode"]["artnet_dest"], "broadcast")
+        self.assertEqual(config.validate(with_dest(""))["vlans"][1]["timecode"]["artnet_dest"], "broadcast")
+        self.assertEqual(config.validate(with_dest(" 10.20.0.50 "))["vlans"][1]["timecode"]["artnet_dest"], "10.20.0.50")
+        for bad, why in (("10.20.1.5", "not on this VLAN"), ("8.8.8.8", "not on this VLAN"), ("10.20.0.2", "this box"),
+                         ("10.20.0.0", "this box or the network/broadcast"), ("10.20.0.255", "this box or the network/broadcast"),
+                         ("224.0.0.1", "unicast"), ("127.0.0.1", "unicast"), ("0.0.0.0", "unicast"), ("169.254.1.1", "unicast"),
+                         ("255.255.255.255", "unicast"), ("::1", "unicast"), ("host.example.org", "not an IPv4"),
+                         ("10.20.0.5; reboot", "not an IPv4"), ("10.20.0", "not an IPv4"), (5, "must be")):
+            with self.assertRaises(config.ConfigError, msg=repr(bad)) as cm:
+                config.validate(with_dest(bad))
+            self.assertIn(why, str(cm.exception), repr(bad))
+        # a DHCP VLAN cannot be checked against a subnet yet (the sender does it at run time), but must still be a plain unicast IP
+        self.assertEqual(config.validate(with_dest("10.99.1.1", vlan=2))["vlans"][2]["timecode"]["artnet_dest"], "10.99.1.1")
+        with self.assertRaises(config.ConfigError):
+            config.validate(with_dest("239.1.1.1", vlan=2))
+
+    def test_unicast_destination_is_pinned_in_the_firewall(self):
+        c = copy.deepcopy(BASE)
+        c["vlans"][1]["timecode"] = {"artnet": True, "mtc_rtp": False, "fps": 25, "artnet_dest": "10.20.0.50"}
+        n = render.nftables(config.validate(c))
+        self.assertIn('oifname "enp3s0.20" ip daddr 10.20.0.50 udp dport 6454 accept', n)
+        self.assertNotIn('oifname "enp3s0.20" udp dport 6454 accept', n)                # no broadcast allowance left
+        c["vlans"][1]["timecode"]["artnet_dest"] = "broadcast"
+        self.assertIn('oifname "enp3s0.20" udp dport 6454 accept', render.nftables(config.validate(c)))
+
     def test_timecode_toggles_off_by_default(self):
         n = render.nftables(cfg())
         self.assertEqual(n.count("udp dport 6454"), 1)  # only VLAN 20 enabled it

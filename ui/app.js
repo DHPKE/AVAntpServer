@@ -297,6 +297,9 @@ createApp({setup() {
     v.mode = v.mode || 'dhcp'; v.timezone = v.timezone || 'UTC'; delete v.utc_offset_min
     v.ntp = v.ntp !== false; v.mgmt = !!v.mgmt; v.address = v.address || ''
     v.timecode = Object.assign({artnet: false, mtc_rtp: false, fps: 25}, v.timecode || {})
+    const to = v.timecode.artnet_dest || 'broadcast'                 // the server stores one value; the form edits it as mode + address
+    v.timecode.dest_mode = to === 'broadcast' ? 'broadcast' : 'unicast'
+    v.timecode.dest_ip = to === 'broadcast' ? '' : to
     return v
   }
   function initDraft() {
@@ -313,6 +316,11 @@ createApp({setup() {
     const d = JSON.parse(JSON.stringify(draft.value))
     for (const k of ['default', 'backup', 'custom']) d.upstream[k] = up[k].split('\n').map(s => s.trim()).filter(Boolean)
     for (const v of d.vlans) { if (v.mode !== 'static') delete v.address }
+    for (const v of d.vlans) {
+      const t = v.timecode
+      t.artnet_dest = t.dest_mode === 'unicast' ? (t.dest_ip || '').trim() : 'broadcast'
+      delete t.dest_mode; delete t.dest_ip
+    }
     if (d.wan.mode !== 'static') { delete d.wan.address; delete d.wan.gateway; delete d.wan.dns }
     return d
   }
