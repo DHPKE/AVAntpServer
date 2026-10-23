@@ -30,13 +30,13 @@ def paths():
 
 
 def run_timecode():
-    """Art-Net timecode sender (unprivileged service). Development: AVANTP_TC_DEST=<local ip>,<dest ip>,<port>."""
+    """Art-Net timecode sender (unprivileged service). Development: AVANTP_TC_DEST=<local ip>,<dest ip>,<artnet port>[,<MTC control port>]."""
     from . import timecode
     _, etc, _ = paths()
     dest = os.environ.get("AVANTP_TC_DEST")
     if dest:
-        ip, to, port = dest.split(",")
-        dest = (ip, to, int(port))
+        ip, to, port, *mtc = dest.split(",")
+        dest = (ip, to, int(port)) + ((int(mtc[0]),) if mtc else ())
     timecode.main(os.path.join(etc, "config.json"), timecode_status_path(), dest)
 
 

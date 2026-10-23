@@ -2,7 +2,7 @@
 // Needs: a server started with fake chronyc/ip on PATH and AVANTP_ALLOW_HTTP=1 on 127.0.0.1:8765, user admin / "correct horse battery".
 //   export AVANTP_DIR=<dir with users.json> AVANTP_CONFIRM_SECONDS=4 PATH=tests/browser/fakebin:$PATH
 //   python3 -m avantp apply --fake --watch &        # development helper: records instead of touching the system
-//   AVANTP_TC_DEST=127.0.0.1,127.0.0.1,16454 python3 -m avantp timecode &   # the Art-Net sender, aimed at this test
+//   AVANTP_TC_DEST=127.0.0.1,127.0.0.1,16454,16504 python3 -m avantp timecode &   # the sender (Art-Net to :16454, MTC session on :16504)
 //   AVANTP_ALLOW_HTTP=1 python3 -m avantp web 127.0.0.1 8765
 //   node tests/browser/ui-test.mjs <screenshot-dir>
 import { spawn } from 'node:child_process'
@@ -33,6 +33,16 @@ const ev = async js => { const r = await send('Runtime.evaluate', {expression: j
 const shot = async name => { const r = await send('Page.captureScreenshot', {format: 'png'}); writeFileSync(`${S}/shot-${name}.png`, Buffer.from(r.result.data, 'base64')) }
 const text = () => ev('document.body.innerText')
 const results = []
+// a minimal AppleMIDI initiator (what a Mac or rtpMIDI does): joins the box's MTC session and collects the RTP packets
+const u32 = n => { const b = Buffer.alloc(4); b.writeUInt32BE(n >>> 0); return b }
+const appleInv = (cmd, token, ssrc, name) => Buffer.concat([Buffer.from([0xff, 0xff]), Buffer.from(cmd), u32(2), u32(token), u32(ssrc), Buffer.from(name + '\0')])
+const mtcPeer = {ok: [], rtp: [], ctrl: dgram.createSocket('udp4'), data: dgram.createSocket('udp4')}
+for (const [k, tag] of [['ctrl', 'c'], ['data', 'd']]) mtcPeer[k].on('message', m => { if (m[0] === 0xff && m[2] === 0x4f && m[3] === 0x4b) mtcPeer.ok.push(tag); else if (m[0] === 0x80) mtcPeer.rtp.push(m) })
+mtcPeer.ctrl.bind(0, '127.0.0.1'); mtcPeer.data.bind(0, '127.0.0.1')
+const joinMtc = async () => {
+  mtcPeer.ctrl.send(appleInv('IN', 31337, 0xC0FFEE, 'Node Mac'), 16504, '127.0.0.1'); await sleep(300)
+  mtcPeer.data.send(appleInv('IN', 31337, 0xC0FFEE, 'Node Mac'), 16505, '127.0.0.1'); await sleep(300)
+}
 const artnet = []                                   // what the Art-Net sender really transmits
 const udp = dgram.createSocket('udp4'); udp.on('message', m => artnet.push(m)); udp.bind(16454, '127.0.0.1')
 const check = (name, ok, extra = '') => { results.push(ok); console.log((ok ? 'PASS ' : 'FAIL ') + name + (ok ? '' : '  -> ' + extra)) }
@@ -89,7 +99,7 @@ await ev(`(()=>{const r=document.querySelectorAll('tbody tr');
  const set=(el,v)=>{el.value=v;el.dispatchEvent(new Event(el.tagName==='SELECT'?'change':'input'))};
  const c=(row,n,sel='input,select')=>row.querySelector(sel.split(',').map(x=>'td:nth-child('+n+') '+x).join(','));
  set(c(r[0],4),'10.10.10.2/24'); set(c(r[0],5),'Europe/Berlin'); if(!c(r[0],7,'input').checked) c(r[0],7,'input').click();
- set(c(r[1],1),20); set(c(r[1],2),'show'); set(c(r[1],5),'America/New_York'); c(r[1],8,'input').click(); return 1})()`)
+ set(c(r[1],1),20); set(c(r[1],2),'show'); set(c(r[1],5),'America/New_York'); c(r[1],8,'input').click(); c(r[0],10,'input').click(); return 1})()`)
 await sleep(300)
 // Art-Net destination: broadcast, or unicast to one receiver on the VLAN
 const dest = () => ev(`(() => { const r = [...document.querySelectorAll('tbody tr')]; const c = i => r[i].querySelector('td:nth-child(9)'); return {sel: !!c(1).querySelector('select'), ip: !!c(1).querySelector('input'), off: c(0).textContent.trim()} })()`)
@@ -193,6 +203,19 @@ for (let i = 0; i < 25 && !tcSeen; i++) { await sleep(400); tcSeen = (await text
 t = await text()
 check('timecode card: VLAN 20 is reported as really sending (from the sender service)', tcSeen, t.slice(t.indexOf('TIMECODE'), t.indexOf('TIMECODE') + 400))
 check('timecode card: VLANs with the toggle off say off, MTC says off', /Dante Prim[^\n]*off/.test(t) || t.includes('\toff'), '')
+let mtcSeen = false
+for (let i = 0; i < 25 && !mtcSeen; i++) { await sleep(400); mtcSeen = (await text()).includes('ready on 127.0.0.1:16504') }
+t = await text()
+check('MTC over RTP-MIDI: the sender listens and the card says where to connect a receiver', mtcSeen && t.includes('session "AVAntp Dante Prim (A\u2013B)"') && t.includes('connect a receiver to this address'), t.slice(t.indexOf('TIMECODE'), t.indexOf('TIMECODE') + 700))
+check('... no longer says "not implemented"', !t.includes('not implemented'))
+await joinMtc()
+check('... a receiver completes the session handshake (control OK, data OK)', JSON.stringify(mtcPeer.ok) === '["c","d"]', JSON.stringify(mtcPeer.ok))
+let joined = false
+for (let i = 0; i < 25 && !joined; i++) { await sleep(300); joined = (await text()).includes('sending 25 fps to 1 receiver: 127.0.0.1') }
+check('... and the card shows MTC sending to that receiver', joined, (await text()).slice(0, 100))
+await sleep(500)
+const qf = mtcPeer.rtp.filter(m => m[12] === 2 && m[13] === 0xf1)
+check('... the receiver gets MIDI Timecode quarter frames (about 100 per second) after a full-frame message', mtcPeer.rtp.length > 40 && qf.length > 30 && mtcPeer.rtp[0][12] === 10 && mtcPeer.rtp[0][13] === 0xf0, `${mtcPeer.rtp.length} packets, ${qf.length} quarter frames`)
 check('the sender really transmits ArtTimeCode packets', artnet.length > 5 && artnet[0].subarray(0, 8).toString('latin1') === 'Art-Net\0' && artnet[0][9] === 0x97 && artnet[0].length === 19, `packets: ${artnet.length}`)
 const tcs = async () => ev(`[...document.querySelectorAll('.tcnow')].map(e => e.textContent.trim())`)
 const tc1 = await tcs(); await sleep(450); const tc2 = await tcs()
@@ -262,5 +285,5 @@ await click('.sub .btn'); await sleep(800)
 t = await text(); check('logout returns to login', t.includes('LOGIN') && !t.includes('MONITOR'))
 const real = errors.filter(e => !/status of 40[0-9]/.test(e)); check('no JS errors (expected 400/401 from deliberate bad requests ignored)', real.length === 0, real.join(' | '))
 console.log(results.every(Boolean) ? 'ALL PASS' : 'SOME FAILED', `(${results.filter(Boolean).length}/${results.length})`)
-udp.close(); ws.close(); chrome.kill()
+udp.close(); mtcPeer.ctrl.close(); mtcPeer.data.close(); ws.close(); chrome.kill()
 process.exit(results.every(Boolean) ? 0 : 1)

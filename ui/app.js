@@ -249,13 +249,21 @@ createApp({setup() {
         a.state === 'no-address' ? 'waiting for an IP address' :
         a.state === 'error' ? 'error: ' + a.error : 'starting\u2026'
     }
-    if (t.mtc_rtp) mtc = 'enabled, but not implemented yet'
+    const m = tcStat(v).mtc_rtp || NOT
+    if (t.mtc_rtp) {
+      mtc = !tc.value.running ? 'service not running' :
+        m.state === 'sending' ? 'sending ' + (m.fps || t.fps) + ' fps to ' + m.peers.length + ' receiver' + (m.peers.length === 1 ? '' : 's') + ': ' + m.peers.map(p => p.ip).join(', ') :
+        m.state === 'listening' ? 'ready on ' + m.listen + ' (session "' + m.name + '"): connect a receiver to this address' :
+        m.state === 'no-address' ? 'waiting for an IP address' :
+        m.state === 'error' ? 'error: ' + m.error : 'starting…'
+    }
     return {artnet, mtc}
   }
   function tcCls(v) {
     const t = v.timecode || {}, a = tcStat(v).artnet || NOT
     return {artnet: !t.artnet ? '' : (tc.value.running && a.state === 'sending') ? 'good' : a.state === 'error' ? 'badc' : 'warnc',
-            mtc: t.mtc_rtp ? 'warnc' : ''}
+            mtc: !t.mtc_rtp ? '' : (tc.value.running && (tcStat(v).mtc_rtp || NOT).state === 'sending') ? 'good' :
+                 (tcStat(v).mtc_rtp || NOT).state === 'error' ? 'badc' : (tcStat(v).mtc_rtp || NOT).state === 'listening' ? '' : 'warnc'}
   }
 
   // ---- config

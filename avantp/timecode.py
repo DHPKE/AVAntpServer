@@ -2,7 +2,7 @@
 
 Art-Net: an ArtTimeCode packet (UDP 6454) per frame, broadcast on the VLAN's subnet, only for VLANs that have the
 toggle on. The clock is the system clock (kept right by chrony). This runs unprivileged: it only needs to send UDP.
-MTC over RTP-MIDI is not implemented yet; the status says so instead of pretending.
+MTC over RTP-MIDI (rtpmidi.py) is a session listener per VLAN: receivers connect to the box and then get the quarter frames.
 
 Status is written to a JSON file about once a second for the WebUI. The active config is re-read when it changes,
 so an apply takes effect without restarting this service.
@@ -13,6 +13,7 @@ import ipaddress
 import json
 import logging
 import os
+import select
 import socket
 import struct
 import subprocess
@@ -96,6 +97,7 @@ class Sender:
         self.cfg_path, self.status_path, self.dest_override = cfg_path, status_path, dest_override
         self.now, self.addresses, self.route = now, addresses, route
         self.outputs = {}                  # vlan id -> dict(state, fps, tz, name, iface, next, sent, last, dest, sock)
+        self.mtc = {}                      # vlan id -> rtpmidi.Endpoint (MTC over RTP-MIDI session listener)
         self.cfg_mtime = None
         self.addr_at = 0
         self.addr = {}
@@ -130,6 +132,8 @@ class Sender:
         for vid, o in self.outputs.items():
             if vid not in keep and o.get("sock"):
                 o["sock"].close()
+        for vid in [v for v in self.mtc if v not in keep]:
+            self.mtc.pop(vid).close()
         self.outputs = keep
 
     def _state(self, vid, o, state, detail=""):
@@ -230,8 +234,64 @@ class Sender:
                     self._state(vid, o, "error", f"(send to {o['dest']} failed: {why})")
                 o["next"] += 1 / rate
             nxt = o["next"] if nxt is None else min(nxt, o["next"])
+        mtc_due = self._tick_mtc()
+        if mtc_due is not None:
+            nxt = mtc_due if nxt is None else min(nxt, mtc_due)
         self.write_status()
         return nxt
+
+    # ---- MTC over RTP-MIDI
+    def _tick_mtc(self):
+        from . import rtpmidi
+        due = None
+        for vid, o in self.outputs.items():
+            ep = self.mtc.get(vid)
+            if not o["mtc"]:
+                if ep:
+                    ep.close()
+                    del self.mtc[vid]
+                    log.info("VLAN %s %s: MTC off", vid, o["name"])
+                o["mtc_state"] = {"state": "off"}
+                continue
+            local_ip, bcast, net = (tuple(self.addr.get(o["iface"], ())) + (None, None, None))[:3]
+            ports = (rtpmidi.CONTROL_PORT, rtpmidi.DATA_PORT)
+            if self.dest_override:                                   # development / tests: fixed address and port
+                local_ip, net = self.dest_override[0], None
+                if len(self.dest_override) > 3:
+                    ports = (self.dest_override[3], self.dest_override[3] + 1)
+            if not local_ip:
+                if ep:
+                    ep.close()
+                    del self.mtc[vid]
+                o["mtc_state"] = {"state": "no-address"}
+                self._mtc_note(vid, o, "no-address", f"(waiting for an IP address on {o['iface']})")
+                continue
+            ident = (local_ip, o["fps"], o["tz"], o["name"], ports)
+            if ep is not None and o.get("mtc_ident") != ident:
+                ep.close()
+                ep = None
+            if ep is None:
+                try:
+                    ep = self.mtc[vid] = rtpmidi.Endpoint("AVAntp " + o["name"], local_ip, o["fps"], o["tz"], net, ports)
+                    o["mtc_ident"] = ident
+                except OSError as e:
+                    o["mtc_state"] = {"state": "error", "error": f"cannot listen on {local_ip}:{ports[0]}: {e}"}
+                    self._mtc_note(vid, o, "error", f"({o['mtc_state']['error']})")
+                    continue
+            nxt = ep.tick()
+            due = nxt if due is None else min(due, nxt)
+            st = ep.status()
+            o["mtc_state"] = st
+            self._mtc_note(vid, o, st["state"], f"on {st['listen']}, session \"{st['name']}\", {len(st['peers'])} receiver(s) connected")
+        return due
+
+    def _mtc_note(self, vid, o, state, detail=""):
+        if o.get("mtc_logged") != (state, detail):
+            o["mtc_logged"] = (state, detail)
+            (log.warning if state in ("error", "no-address") else log.info)(f"VLAN {vid} {o['name']}: MTC {state} {detail}")
+
+    def mtc_sockets(self):
+        return [sock for ep in self.mtc.values() for sock in ep.sockets()]
 
     # ---- status for the WebUI
     def write_status(self, force=False):
@@ -243,7 +303,7 @@ class Sender:
             a = ({"state": "off"} if not o["artnet"] else
                  {"state": o.get("state", "starting"), "fps": o["fps"], "dest": o.get("dest"), "sent": o["sent"],
                   "last": o["last"], "error": o["error"]})
-            m = {"state": "not-implemented"} if o["mtc"] else {"state": "off"}
+            m = o.get("mtc_state", {"state": "starting"}) if o["mtc"] else {"state": "off"}
             vlans.append({"id": vid, "name": o["name"], "tz": o["tz"], "artnet": a, "mtc_rtp": m})
         doc = json.dumps({"time": self.now(), "vlans": vlans})
         os.makedirs(os.path.dirname(self.status_path), exist_ok=True)
@@ -266,7 +326,11 @@ class Sender:
                 time.sleep(min(30, failures))
                 continue
             wait = 0.5 if nxt is None else max(0.0, min(0.5, nxt - self.now()))
-            time.sleep(wait)
+            socks = self.mtc_sockets()
+            if socks:
+                select.select(socks, [], [], wait)                      # wake up for a session packet or the next quarter frame
+            else:
+                time.sleep(wait)
 
 
 def main(cfg_path, status_path, dest=None):

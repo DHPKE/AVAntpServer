@@ -105,7 +105,7 @@ def nftables(cfg):
             only = "" if tc["artnet_dest"] == "broadcast" else f" ip daddr {tc['artnet_dest']}"   # unicast: this one address
             outp.append(f'    oifname "{i}"{only} udp dport 6454 accept')
         if tc["mtc_rtp"]:
-            inp.append(f'    iifname "{i}" udp dport {{ 5004, 5005 }} accept')
+            inp.append(f'    iifname "{i}"{to} udp dport {{ 5004, 5005 }} accept')
             outp.append(f'    oifname "{i}" udp dport {{ 5004, 5005 }} accept')
     wan_ssh_in = (f'    # COMMISSIONING ONLY: SSH + WebUI from the WAN side, switch off once the management VLAN works\n'
                   f'    iifname "{wan}" tcp dport {{ 22, {port} }} accept\n') if cfg["wan"]["commissioning"] else ""

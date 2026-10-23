@@ -322,6 +322,7 @@ def unicast_tests(check, d_cfg):
     check("unicast: a packet aimed at the WAN side (10.99.0.1:6454) never arrives there", wan_n, 0)
     check("unicast: nothing goes to VLAN 10 at all", len(out["lan0.10"]), 0)
     wan_overlap_test(check, d_cfg)
+    mtc_tests(check, d_cfg)
 
 
 def wan_overlap_test(check, d_cfg):
@@ -358,6 +359,87 @@ def wan_overlap_test(check, d_cfg):
     check("overlap: ... without sending a single packet itself", a.get("sent", 0), 0)
     check("overlap: ... a deliberately forced packet is stopped by the firewall (EPERM, the error you saw)", "forced sends blocked by the firewall: 5" in r.stdout, True)
     check("overlap: ... and nothing at all reaches the WAN side", wan_n, 0)
+
+
+MTC_PEER = r'''
+import json, socket, struct, sys, time
+sys.path.insert(0, "/work")
+from avantp import rtpmidi as r
+src, dst, secs = sys.argv[1], sys.argv[2], float(sys.argv[3])
+ctrl = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); ctrl.bind((src, 0)); ctrl.settimeout(0.6)
+data = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); data.bind((src, 0)); data.settimeout(0.05)
+res = {"ok_ctrl": None, "ok_data": None, "ck": None, "rtp": 0, "qf": 0, "full": 0, "pieces": [], "hour_field": None}
+def ask(sock, port, pkt):
+    sock.sendto(pkt, (dst, port))
+    try:
+        return r.parse(sock.recvfrom(1500)[0])
+    except socket.timeout:
+        return None
+inv = lambda: r.build_inv("IN", 4242, 0xCAFEBABE, b"Test Mac")
+a = ask(ctrl, 5004, inv()); res["ok_ctrl"] = a and a["cmd"]
+if a and a["cmd"] == "OK":
+    data.settimeout(0.6)
+    b = ask(data, 5005, inv()); res["ok_data"] = b and b["cmd"]
+    data.settimeout(0.05)
+    data.sendto(r.build_ck(0xCAFEBABE, 0, (777, 0, 0)), (dst, 5005))
+end = time.time() + secs
+while time.time() < end:
+    try:
+        p = data.recvfrom(1500)[0]
+    except socket.timeout:
+        continue
+    m = r.parse(p)
+    if m and m["cmd"] == "CK":
+        res["ck"] = m["count"]
+    elif p[:1] == b"\x80":
+        res["rtp"] += 1
+        cmd = p[13:]
+        if cmd[:5] == bytes([0xF0, 0x7F, 0x7F, 0x01, 0x01]):
+            res["full"] += 1; res["hour_field"] = cmd[5] & 31; res["rate"] = cmd[5] >> 5
+        elif cmd[:1] == b"\xf1":
+            res["qf"] += 1
+            res["pieces"].append(cmd[1])
+print(json.dumps(res))
+'''
+
+
+def mtc_tests(check, d_cfg):
+    print("--- MTC over RTP-MIDI: a receiver connects through the firewall; other VLANs and the WAN get nothing")
+    d = tempfile.mkdtemp()
+    m = copy.deepcopy(CFG)
+    m["vlans"][1]["timecode"] = {"artnet": False, "mtc_rtp": True, "fps": 25}          # VLAN 20 on, VLAN 10 off
+    m["vlans"][1]["timezone"] = "America/New_York"
+    load(m, d)
+    json.dump(config.dump(config.validate(m)), open(f"{d_cfg}/config.json", "w"))
+    open("/tmp/mtc_peer.py", "w").write(MTC_PEER)
+    code = ("import sys, time\n"
+            "sys.path.insert(0, '/work')\n"
+            "from avantp import timecode as t\n"
+            f"s = t.Sender('{d_cfg}/config.json', '{d_cfg}/status.json'); end = time.time() + 5.5\n"
+            "while time.time() < end:\n    s.tick(); time.sleep(0.002)\n"
+            "s.write_status(force=True)\n")
+    sender = subprocess.Popen(["ip", "netns", "exec", "box", "python3", "-c", code], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    time.sleep(1.0)
+    run_peer = lambda ns, src, dst, secs: subprocess.Popen(["ip", "netns", "exec", ns, "python3", "/tmp/mtc_peer.py", src, dst, str(secs)],
+                                                           stdout=subprocess.PIPE, text=True)
+    ok = run_peer("lanhost", "10.20.0.10", "10.20.0.2", 2.5)           # VLAN 20: MTC on
+    v10 = run_peer("lanhost", "10.10.10.10", "10.10.10.2", 1.5)        # VLAN 10: MTC off, no firewall rule
+    wan = run_peer("wanpeer", "10.99.0.1", "10.99.0.2", 1.5)            # the WAN side
+    res = {n: json.loads(p.communicate(timeout=20)[0]) for n, p in (("ok", ok), ("v10", v10), ("wan", wan))}
+    sender.communicate(timeout=20)
+    st = {v["id"]: v["mtc_rtp"] for v in json.load(open(f"{d_cfg}/status.json"))["vlans"]}
+    o = res["ok"]
+    check("mtc: the receiver on VLAN 20 completes the AppleMIDI handshake through the firewall (control OK, data OK, clock sync)",
+          (o["ok_ctrl"], o["ok_data"], o["ck"]), ("OK", "OK", 1))
+    check("mtc: ... gets a full-frame message and about 100 quarter frames per second (2.5 s)", o["full"] >= 1 and 200 <= o["qf"] <= 300, True)
+    pieces = [p >> 4 for p in o["pieces"]]
+    check("mtc: ... the quarter-frame pieces cycle 0..7 without gaps", all((b - a) % 8 == 1 for a, b in zip(pieces, pieces[1:])), True)
+    ny = datetime.datetime.now(zoneinfo.ZoneInfo("America/New_York")).hour
+    check("mtc: ... in the VLAN's own time zone (New York hour) and at 25 fps", o["hour_field"] in (ny, (ny + 23) % 24) and o["rate"] == 1, True)
+    check("mtc: a host on VLAN 10 (MTC off) gets no answer at all", (res["v10"]["ok_ctrl"], res["v10"]["rtp"]), (None, 0))
+    check("mtc: a host on the WAN side gets no answer at all", (res["wan"]["ok_ctrl"], res["wan"]["rtp"]), (None, 0))
+    check("mtc: status shows the session with that receiver", st[20]["state"] == "sending" and [p["ip"] for p in st[20]["peers"]] == ["10.20.0.10"], True)
+    check("mtc: status: VLAN 10 is off", st[10]["state"], "off")
 
 
 def helper_tests(check, listener_ok):

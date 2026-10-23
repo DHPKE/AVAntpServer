@@ -387,15 +387,6 @@ class SenderTest(unittest.TestCase):
         self.assertRegex(v["artnet"]["last"], r"^\d\d:\d\d:\d\d:\d\d$")
         self.assertEqual([x["artnet"]["state"] for x in st["vlans"] if x["id"] != 20], ["off", "off"])
 
-    def test_mtc_is_reported_as_not_implemented_not_faked(self):
-        self.write_cfg(lambda c: c["vlans"][0]["timecode"].update(mtc_rtp=True))
-        s = tcm.Sender(self.cfg_path, self.status, dest_override=("127.0.0.1", "127.0.0.1", self.port))
-        s.tick()
-        s.write_status(force=True)
-        v = [x for x in json.load(open(self.status))["vlans"] if x["id"] == 10][0]
-        self.assertEqual(v["mtc_rtp"]["state"], "not-implemented")
-        self.assertEqual(self.run_sender(s, 0.2), [])                                      # and nothing goes out
-
     def test_waits_for_an_address_on_dhcp_vlans(self):
         self.write_cfg(lambda c: c["vlans"][1]["timecode"].update(artnet=True))
         s = tcm.Sender(self.cfg_path, self.status, addresses=lambda: {})
