@@ -301,6 +301,8 @@ check('VLANS tab: the static VLAN still has its input field', await ev(`[...docu
 check('VLANS tab: the received address is not an editable field', await ev(`![...document.querySelectorAll('tbody tr')][1].querySelector('input[placeholder="10.20.0.2/24"]')`))
 await ev(`[...document.querySelectorAll('.btn.ghost')].find(b=>b.textContent.includes('ADD VLAN')).click()`); await sleep(300)
 check('VLANS tab: a new, unsaved DHCP row says it is not applied yet', (await text()).includes('not applied yet'))
+t = await text()
+check('VLANS tab: the Node-RED card has both switches, off by default', t.toLowerCase().includes('open the node-red page (port 1880)') && t.toLowerCase().includes('allow palette installs') && await ev(`(() => { const c = [...document.querySelectorAll('.card')].find(x => x.textContent.includes('Open the Node-RED page')); return !!c && [...c.querySelectorAll('input[type=checkbox]')].length === 2 && ![...c.querySelectorAll('input[type=checkbox]')].some(i => i.checked) })()`), t.slice(0, 200))
 await tab('MONITOR'); await sleep(400)
 
 // LOG tab: the journal in the browser, and a warning after an unclean restart

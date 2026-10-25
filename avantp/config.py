@@ -1,6 +1,7 @@
 """Load and validate the appliance config. Everything that ends up in a generated file passes through here."""
 import ipaddress
 import json
+import pwd
 import re
 import zoneinfo
 
@@ -11,6 +12,8 @@ NAME_RE = re.compile(r"^\w[\w .()\-\u2010-\u2015]{0,31}$")
 CONTROL_RE = re.compile(r"[\x00-\x1f\x7f\x85\u2028\u2029]")
 HOST_RE = re.compile(r"^(?=.{1,253}$)([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$")
 MAX_VLANS = 20
+NODERED_PORT = 1880          # Node-RED editor/dashboard; fixed like the WebUI port
+USER_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 FRAME_RATES = (24, 25, 29.97, 30)
 
 
@@ -39,6 +42,30 @@ def _net(cidr, where):
         return ipaddress.ip_interface(cidr)
     except ValueError:
         raise ConfigError(f"{where}: invalid address {cidr!r} (example: 10.1.1.24/24)")
+
+
+def _uid(user):
+    """uid of a local account (None if it does not exist). The firewall rule uses the number, so loading the rules never
+    depends on a name lookup."""
+    try:
+        return pwd.getpwnam(user).pw_uid
+    except KeyError:
+        return None
+
+
+def _nodered(cfg, strict):
+    """Node-RED on this box. `ui`: its page (tcp 1880) on every VLAN that has mgmt on, like the WebUI and SSH.
+    `palette`: tcp 443 out on the WAN side for the account Node-RED runs as, and nobody else (palette installs)."""
+    n = cfg.setdefault("nodered", {})
+    _need(isinstance(n, dict), "nodered must be an object")
+    n.setdefault("ui", False)
+    n.setdefault("palette", False)
+    n.setdefault("user", "node")
+    for k in ("ui", "palette"):
+        _need(isinstance(n[k], bool), f"nodered.{k} must be true or false")        # these switches open firewall ports
+    _need(isinstance(n["user"], str) and USER_RE.match(n["user"]), f"nodered.user: invalid account name {n['user']!r}")
+    if n["palette"] and strict:
+        _need(_uid(n["user"]) is not None, f"nodered.user: there is no account {n['user']!r} on this box")
 
 
 def validate(cfg, strict=True):
@@ -146,6 +173,7 @@ def validate(cfg, strict=True):
         v["iface"] = f"{lan['iface']}.{vid}"
     _need(wan["commissioning"] or any(v["mgmt"] for v in vlans),
           "at least one VLAN must have mgmt=true (WebUI/SSH access), or enable wan.commissioning")
+    _nodered(cfg, strict)
     web = cfg.setdefault("webui", {})
     web.setdefault("port", 8443)
     _need(web["port"] == 8443, "webui.port is fixed at 8443")

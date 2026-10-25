@@ -356,6 +356,7 @@ createApp({setup() {
     d.wan.commissioning = !!d.wan.commissioning
     d.upstream = Object.assign({default: [], backup: [], custom: [], local_fallback: false}, d.upstream)
     d.vlans = (d.vlans || []).map(normVlan)
+    d.nodered = Object.assign({ui: false, palette: false, user: 'node'}, d.nodered)
     for (const k of ['default', 'backup', 'custom']) up[k] = d.upstream[k].join('\n')
     draft.value = d
     baseline.value = snapshot()

@@ -260,5 +260,85 @@ class Render(unittest.TestCase):
         self.assertIn("net.ipv6.conf.all.forwarding=0", s)
 
 
+
+class NodeRed(unittest.TestCase):
+    """Node-RED on the box: its page on management VLANs, and HTTPS out for its account only."""
+
+    def setUp(self):
+        self._uid = config._uid
+        config._uid = lambda u: 1000 if u == "node" else None
+
+    def tearDown(self):
+        config._uid = self._uid
+
+    def nr(self, **edit):
+        c = copy.deepcopy(BASE)
+        c["nodered"] = {"ui": True, "palette": True}
+        c["nodered"].update(edit)
+        c["vlans"][2]["mgmt"] = False
+        return c
+
+    def bad(self, c, text=""):
+        with self.assertRaises(config.ConfigError) as e:
+            config.validate(c)
+        self.assertIn(text, str(e.exception))
+
+    def test_off_by_default_opens_nothing(self):
+        n = render.nftables(cfg())
+        self.assertEqual(cfg()["nodered"], {"ui": False, "palette": False, "user": "node"})
+        self.assertNotIn("1880", n)
+        self.assertNotIn("skuid", n)
+
+    def test_page_only_on_management_vlans(self):
+        n = render.nftables(config.validate(self.nr()))
+        self.assertIn('iifname "enp3s0.10" ip daddr 10.10.10.2 tcp dport 1880 accept', n)   # the mgmt VLAN, pinned to its address
+        self.assertEqual(n.count("tcp dport 1880"), 1)                                      # VLAN 20 and 30 have mgmt off
+        self.assertNotIn('iifname "enp4s0" tcp dport 1880', n)                              # never from the WAN side
+
+    def test_page_follows_every_mgmt_vlan(self):
+        c = self.nr()
+        c["vlans"][1]["mgmt"] = True
+        n = render.nftables(config.validate(c))
+        self.assertIn('iifname "enp3s0.20" ip daddr 10.20.0.2 tcp dport 1880 accept', n)
+        self.assertEqual(n.count("tcp dport 1880"), 2)
+
+    def test_dhcp_mgmt_vlan_has_no_address_pin(self):
+        c = self.nr()
+        c["vlans"][2]["mgmt"] = True
+        self.assertIn('iifname "enp3s0.30" tcp dport 1880 accept', render.nftables(config.validate(c)))
+
+    def test_palette_is_https_out_for_one_account_on_the_wan(self):
+        n = render.nftables(config.validate(self.nr()))
+        self.assertIn('oifname "enp4s0" meta skuid 1000 tcp dport 443 accept', n)
+        self.assertEqual(n.count("tcp dport 443"), 1)           # the update window's "{ 80, 443 }" line is separate
+        self.assertEqual(n.count("skuid"), 1)
+        self.assertIn("hook output priority 0; policy drop;", n)
+
+    def test_palette_off_leaves_update_mode_as_the_only_way(self):
+        n = render.nftables(config.validate(self.nr(palette=False)))
+        self.assertNotIn("skuid", n)
+        self.assertIn("oifname @update_window tcp dport { 80, 443 } accept", n)
+
+    def test_palette_needs_an_existing_account(self):
+        self.bad(self.nr(user="nobody-such"), "no account")
+        config.validate(self.nr(user="nobody-such", palette=False))   # only checked when the rule is wanted
+
+    def test_account_name_is_checked_before_it_reaches_a_rule(self):
+        for bad in ("node; drop", "No De", "../x", "", 5, "a" * 40):
+            self.bad(self.nr(user=bad))
+
+    def test_switches_must_be_real_booleans(self):
+        self.bad(self.nr(ui="no"), "true or false")
+        self.bad(self.nr(palette=1), "true or false")
+
+    def test_existing_config_without_the_section_loads(self):
+        c = copy.deepcopy(BASE)
+        c.pop("nodered", None)
+        self.assertFalse(config.validate(c)["nodered"]["ui"])
+
+    def test_survives_dump_and_reload(self):
+        c = config.validate(self.nr())
+        self.assertEqual(config.validate(config.dump(c))["nodered"], c["nodered"])
+
 if __name__ == "__main__":
     unittest.main()

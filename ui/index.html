@@ -250,6 +250,14 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
     <div style="margin-top:12px"><button class="btn ghost" :disabled="draft.vlans.length>=20" @click="addVlan">+ ADD VLAN</button></div>
     <div class="smeta" style="text-align:left;margin-top:10px">Timecode outputs are off by default. Art-Net goes out as a broadcast on the VLAN or as unicast to one receiver on that VLAN's own network. The time zone (pick a city, daylight saving is automatic) sets the VLAN's local time and timecode; NTP itself always carries UTC. DHCP VLANs never accept routes, DNS or NTP from the server.</div>
   </div></div>
+  <div class="sform" style="margin-top:16px">
+    <div class="card"><div class="lbl">Node-RED</div>
+      <label class="chk"><input type="checkbox" v-model="draft.nodered.ui"> Open the Node-RED page (port 1880) on every VLAN with MGMT on</label>
+      <div class="smeta" style="text-align:left;margin:6px 0 12px">Same VLANs as the WebUI and SSH. Nothing is opened on the WAN side.</div>
+      <label class="chk"><input type="checkbox" v-model="draft.nodered.palette"> Allow palette installs: HTTPS to the internet, for Node-RED only</label>
+      <div class="smeta" style="text-align:left;margin-top:6px">Opens port 443 on the WAN side permanently, only for the account Node-RED runs as ({{ draft.nodered.user }}). Node-RED flows can then reach the internet; switch it off when you do not need it.</div>
+    </div>
+  </div>
   <div class="sst" :class="msgCls" v-if="msg">{{ msg }}<button class="xbtn" title="Dismiss" aria-label="Dismiss" @click="msg=''">&#10005;</button></div>
   <div class="actions"><button class="btn" :disabled="busy" @click="save">SAVE</button></div>
   </template>
