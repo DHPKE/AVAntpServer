@@ -319,13 +319,12 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
       <button class="btn ghost" :disabled="swBusy || busy || applyBusy" @click="swAsk('check')">CHECK FOR UPDATES</button>
       <button class="btn" style="margin-left:8px" :disabled="swBusy || busy || applyBusy" @click="swAsk('update')">UPDATE NOW</button>
       <div class="smeta" style="text-align:left;margin-top:10px">UPDATE NOW opens web access just for the download, installs the newest version from GitHub and closes web access again. The WebUI restarts: log in again afterwards. Your network, firewall and settings are not touched.</div>
-      <details style="margin-top:12px"><summary class="smeta" style="cursor:pointer;text-align:left">Advanced: open web access by hand (for apt on the box)</summary>
-        <div class="cr" style="margin-top:8px"><span class="ck">Update mode</span><span class="cv" :class="um.state==='on' ? 'warnc' : ''">{{ um.state==='on' ? 'ON, ' + umLeftText + ' left' : 'off' }}</span></div>
-        <div class="smeta" style="text-align:left;margin:6px 0 10px">Opens ports 80 and 443 on the WAN side for 15 minutes so that <b>sudo apt update &amp;&amp; sudo apt upgrade</b> works on the box. Closes by itself.</div>
-        <button class="btn" v-if="um.state!=='on'" :disabled="busy || applyBusy || !cfg.active" @click="setUpdateMode(true)">ENTER UPDATE MODE</button>
-        <button class="btn ghost" v-else :disabled="busy" @click="setUpdateMode(false)">END UPDATE MODE</button>
-        <div class="sst err" v-if="um.state==='error' && !dis('um', um.time)" style="margin:10px 0 0">{{ um.error }}<button class="xbtn" title="Dismiss" aria-label="Dismiss" @click="dismiss('um', um.time)">&#10005;</button></div>
-      </details>
+      <div class="div" style="margin-top:14px"></div>
+      <div class="cr" style="margin-top:12px"><span class="ck">Update mode (web access for apt)</span><span class="cv" :class="um.state==='on' ? 'warnc' : ''">{{ um.state==='on' ? 'ON, ' + umLeftText + ' left' : 'off' }}</span></div>
+      <div class="smeta" style="text-align:left;margin:6px 0 10px">Opens ports 80 and 443 on the WAN side for 15 minutes so that <b>sudo apt update &amp;&amp; sudo apt upgrade</b> works on the box. Closes by itself.</div>
+      <button class="btn" v-if="um.state!=='on'" :disabled="busy || applyBusy || !cfg.active" @click="setUpdateMode(true)">ENTER UPDATE MODE</button>
+      <button class="btn ghost" v-else :disabled="busy" @click="setUpdateMode(false)">END UPDATE MODE</button>
+      <div class="sst err" v-if="um.state==='error' && !dis('um', um.time)" style="margin:10px 0 0">{{ um.error }}<button class="xbtn" title="Dismiss" aria-label="Dismiss" @click="dismiss('um', um.time)">&#10005;</button></div>
     </div>
     <div class="card"><div class="lbl">System</div>
       <div class="cr"><span class="ck">Installed version</span><span class="cv">{{ version || 'unknown' }}</span></div>

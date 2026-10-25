@@ -244,7 +244,7 @@ const sysTitles = await ev(`[...document.querySelectorAll('.sform > .card > .lbl
 check('the SYSTEM tab has Software, one merged System box (version + re-apply) and the password box', JSON.stringify(sysTitles) === JSON.stringify(['Software', 'System', 'Change password (admin)']), JSON.stringify(sysTitles))
 check('... the System box holds the version, the RE-APPLY button and the update hint', await ev(`(() => { const c = [...document.querySelectorAll('.sform > .card')].find(c => c.querySelector('.lbl').textContent.trim() === 'System'); return !!c && c.textContent.includes('Installed version') && c.textContent.includes('RE-APPLY CURRENT CONFIG') && c.textContent.includes('Software') })()`))
 check('Software card replaces the old Update-mode card (version, latest, two buttons)', t.includes('SOFTWARE') && t.includes('Latest on GitHub') && t.includes('not checked yet') && t.includes('CHECK FOR UPDATES') && t.includes('UPDATE NOW'), t.slice(0, 300))
-check('the manual Update mode is still there, folded under Advanced', t.includes('Advanced: open web access by hand') && await ev(`!!document.querySelector('details') && !document.querySelector('details').open && [...document.querySelectorAll('details .btn')].some(b => b.textContent.includes('ENTER UPDATE MODE'))`))
+check('the ENTER UPDATE MODE button is visible on the System tab (not folded away)', await ev(`[...document.querySelectorAll('.btn')].some(b => b.textContent.includes('ENTER UPDATE MODE') && b.offsetParent !== null)`))
 const btn = label => `[...document.querySelectorAll('.card .btn')].find(b => b.textContent.includes('${label}'))`
 await ev(`window.__marker = 1; ${btn('CHECK FOR UPDATES')}.click()`)
 let seenChecking = false, done = false
