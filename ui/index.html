@@ -250,26 +250,6 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
     <div style="margin-top:12px"><button class="btn ghost" :disabled="draft.vlans.length>=20" @click="addVlan">+ ADD VLAN</button></div>
     <div class="smeta" style="text-align:left;margin-top:10px">Timecode outputs are off by default. Art-Net goes out as a broadcast on the VLAN or as unicast to one receiver on that VLAN's own network. The time zone (pick a city, daylight saving is automatic) sets the VLAN's local time and timecode; NTP itself always carries UTC. DHCP VLANs never accept routes, DNS or NTP from the server.</div>
   </div></div>
-  <div class="sform" style="margin-top:16px">
-    <div class="card"><div class="lbl">Temp Monitor (Node-RED)</div>
-      <label class="chk"><input type="checkbox" v-model="draft.tempmon.enabled"> Allow Temp Monitor</label>
-      <div class="sf"><label class="slbl">Node-RED page (port 1880) on VLAN</label>
-        <select v-model="draft.tempmon.ui_vlan"><option :value="null">choose&hellip;</option><option v-for="v in draft.vlans" :key="v.id" :value="v.id">{{ v.id }} {{ v.name }}</option></select></div>
-      <div class="smeta" style="text-align:left;margin-top:6px">Off by default. When on, the firewall opens only what is listed here: the Node-RED page on that one VLAN, SNMP to the sensors and HTTP to the router. Nothing on the WAN side.</div>
-    </div>
-    <div class="card"><div class="lbl">Sensors (STE2, SNMP)</div>
-      <div class="sf"><label class="slbl">Sensors are on VLAN</label>
-        <select v-model="draft.tempmon.sensor_vlan"><option :value="null">choose&hellip;</option><option v-for="v in draft.vlans" :key="v.id" :value="v.id">{{ v.id }} {{ v.name }}</option></select></div>
-      <textarea v-model="ts.sensors" placeholder="10.3.30.101" style="margin-top:8px"></textarea>
-      <div class="smeta" style="text-align:left;margin-top:6px">One IP address per line (up to 64). The box only sends SNMP (UDP 161) to these.</div>
-    </div>
-    <div class="card"><div class="lbl">SMS router (RUT240)</div>
-      <div class="sf"><label class="slbl">IP address</label><input type="text" v-model="draft.tempmon.rut240.ip" placeholder="10.10.10.254"></div>
-      <div class="sf"><label class="slbl">Router is on VLAN</label>
-        <select v-model="draft.tempmon.rut240.vlan"><option :value="null">choose&hellip;</option><option v-for="v in draft.vlans" :key="v.id" :value="v.id">{{ v.id }} {{ v.name }}</option></select></div>
-      <div class="smeta" style="text-align:left;margin-top:6px">Optional, can be filled in later. Only HTTP (TCP 80) is opened. The box needs a VLAN with an address in the router's network.</div>
-    </div>
-  </div>
   <div class="sst" :class="msgCls" v-if="msg">{{ msg }}<button class="xbtn" title="Dismiss" aria-label="Dismiss" @click="msg=''">&#10005;</button></div>
   <div class="actions"><button class="btn" :disabled="busy" @click="save">SAVE</button></div>
   </template>

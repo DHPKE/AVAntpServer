@@ -7,7 +7,7 @@ createApp({setup() {
   const lu = ref(''), lp = ref(''), loginErr = ref(''), busy = ref(false)
   const connected = ref(false), status = ref(null), skew = ref(0), now = ref(Date.now())
   const cfg = ref({active: null, pending: null}), ap = ref({state: 'idle'}), um = ref({state: 'off'}), sw = ref({state: 'idle'}), tc = ref({running: false, vlans: []})
-  const draft = ref(null), up = reactive({default: '', backup: '', custom: ''}), ts = reactive({sensors: ''}), baseline = ref('')
+  const draft = ref(null), up = reactive({default: '', backup: '', custom: ''}), baseline = ref('')
   const msg = ref(''), msgCls = ref('ok'), pw = reactive({old: '', new: ''})
   let timers = []
 
@@ -356,9 +356,6 @@ createApp({setup() {
     d.wan.commissioning = !!d.wan.commissioning
     d.upstream = Object.assign({default: [], backup: [], custom: [], local_fallback: false}, d.upstream)
     d.vlans = (d.vlans || []).map(normVlan)
-    d.tempmon = Object.assign({enabled: false, ui_vlan: null, sensor_vlan: null, sensors: []}, d.tempmon)
-    d.tempmon.rut240 = Object.assign({ip: '', vlan: null}, d.tempmon.rut240)
-    ts.sensors = d.tempmon.sensors.join('\n')
     for (const k of ['default', 'backup', 'custom']) up[k] = d.upstream[k].join('\n')
     draft.value = d
     baseline.value = snapshot()
@@ -367,9 +364,6 @@ createApp({setup() {
     const d = JSON.parse(JSON.stringify(draft.value))
     for (const k of ['default', 'backup', 'custom']) d.upstream[k] = up[k].split('\n').map(s => s.trim()).filter(Boolean)
     for (const v of d.vlans) { if (v.mode !== 'static') delete v.address }
-    d.tempmon.sensors = ts.sensors.split(/[\s,;]+/).filter(Boolean)
-    d.tempmon.rut240.ip = (d.tempmon.rut240.ip || '').trim()
-    if (!d.tempmon.rut240.ip) d.tempmon.rut240.vlan = null
     for (const v of d.vlans) {
       const t = v.timecode
       t.artnet_dest = t.dest_mode === 'unicast' ? (t.dest_ip || '').trim() : 'broadcast'
@@ -429,7 +423,7 @@ createApp({setup() {
 
   onMounted(start)
   onUnmounted(stop)
-  return {dis, dismiss, logSince, clearLog, showAllLog, sw, swBusy, applyBusy, swFresh, swCls, swText, swAsk, logSel, logLines, logErr, logLoaded, logbox, boots, bootsErr, dt, logCls, loadLog, loadBoots, copyLog, restartNotice, dismissRestart, lastUpdate, dhcpState, collapsed, toggleCard, liveTc, synced, um, umLeftText, setUpdateMode, version, tabs, tab, user, needsSetup, lu, lp, loginErr, busy, connected, doLogin, doLogout, draft, up, ts, msg, msgCls, pw,
+  return {dis, dismiss, logSince, clearLog, showAllLog, sw, swBusy, applyBusy, swFresh, swCls, swText, swAsk, logSel, logLines, logErr, logLoaded, logbox, boots, bootsErr, dt, logCls, loadLog, loadBoots, copyLog, restartNotice, dismissRestart, lastUpdate, dhcpState, collapsed, toggleCard, liveTc, synced, um, umLeftText, setUpdateMode, version, tabs, tab, user, needsSetup, lu, lp, loginErr, busy, connected, doLogin, doLogout, draft, up, msg, msgCls, pw,
     ap, left, recent, applyNow, confirm, cfg, shown, tr, chronyRunning, sources, ifaces, ifaceNames, syncCls, syncTxt, syncIcon, syncName, fmtS, off, offCls, utcNow,
     tzLabel, tzGroups, localTime, tcText, tcCls, tcStat, tc, utcDate, vlanAddr, cfgVlans, hasPending, draftDirty, wanDns, addVlan, save, changePw}
 }}).mount('#app')

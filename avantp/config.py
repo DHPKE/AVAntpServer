@@ -11,8 +11,6 @@ NAME_RE = re.compile(r"^\w[\w .()\-\u2010-\u2015]{0,31}$")
 CONTROL_RE = re.compile(r"[\x00-\x1f\x7f\x85\u2028\u2029]")
 HOST_RE = re.compile(r"^(?=.{1,253}$)([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$")
 MAX_VLANS = 20
-MAX_SENSORS = 64
-TEMPMON_PORT = 1880          # Node-RED (Temp Monitor); fixed like the WebUI port
 FRAME_RATES = (24, 25, 29.97, 30)
 
 
@@ -41,67 +39,6 @@ def _net(cidr, where):
         return ipaddress.ip_interface(cidr)
     except ValueError:
         raise ConfigError(f"{where}: invalid address {cidr!r} (example: 10.1.1.24/24)")
-
-
-def _unicast(ip, where):
-    """A normal unicast IPv4 address (these go into firewall rules)."""
-    try:
-        a = ipaddress.ip_address(str(ip).strip())
-    except ValueError:
-        raise ConfigError(f"{where}: {ip!r} is not an IPv4 address")
-    _need(a.version == 4 and not (a.is_multicast or a.is_loopback or a.is_unspecified or a.is_link_local or a.is_reserved),
-          f"{where}: {a} must be a normal unicast IPv4 address")
-    return a
-
-
-def _tempmon(cfg, vlans):
-    """Temp Monitor (Node-RED on this box): off by default. Opens ONLY the Node-RED UI port on one VLAN, SNMP (UDP 161)
-    to the listed sensors and HTTP (TCP 80) to the RUT240 router, each on one named VLAN. The sides stay unconnected."""
-    t = cfg.setdefault("tempmon", {})
-    _need(isinstance(t, dict), "tempmon must be an object")
-    t.setdefault("enabled", False)
-    _need(isinstance(t["enabled"], bool), "tempmon.enabled must be true or false")
-    by_id = {v["id"]: v for v in vlans}
-
-    def vlan(key, label, required):
-        vid = t.get(key)
-        if vid in (None, ""):
-            _need(not required, f"tempmon: choose the {label} VLAN")
-            t[key] = None
-            return None
-        _need(isinstance(vid, int) and not isinstance(vid, bool) and vid in by_id, f"tempmon.{key}: VLAN {vid!r} does not exist")
-        return by_id[vid]
-
-    def on_net(v, ip, where):
-        if v["mode"] == "static":                  # a DHCP VLAN's network is unknown here: the router decides at run time
-            _need(ip in v["_if"].network, f"{where}: {ip} is not on VLAN {v['id']}'s network {v['_if'].network}")
-            _need(ip != v["_if"].ip, f"{where}: {ip} is this box's own address")
-
-    sensors = t.setdefault("sensors", [])
-    _need(isinstance(sensors, list), "tempmon.sensors must be a list")
-    _need(len(sensors) <= MAX_SENSORS, f"tempmon: at most {MAX_SENSORS} sensors")
-    t["rut240"] = r = t.get("rut240") or {}
-    _need(isinstance(r, dict), "tempmon.rut240 must be an object")
-    r.setdefault("ip", "")
-    r.setdefault("vlan", None)
-    vlan("ui_vlan", "Node-RED UI", t["enabled"])
-    sv = vlan("sensor_vlan", "sensor", t["enabled"] and bool(sensors))
-    ips = []
-    for ip in sensors:
-        a = _unicast(ip, "tempmon.sensors")
-        if sv:
-            on_net(sv, a, "tempmon.sensors")
-        if str(a) not in ips:
-            ips.append(str(a))
-    t["sensors"] = ips
-    if r["ip"]:
-        ra = _unicast(r["ip"], "tempmon.rut240.ip")
-        r["ip"] = str(ra)
-        rv = by_id.get(r["vlan"])
-        _need(rv is not None, "tempmon.rut240: choose the VLAN the RUT240 is on")
-        on_net(rv, ra, "tempmon.rut240")
-    else:
-        r["ip"], r["vlan"] = "", None
 
 
 def validate(cfg, strict=True):
@@ -209,7 +146,6 @@ def validate(cfg, strict=True):
         v["iface"] = f"{lan['iface']}.{vid}"
     _need(wan["commissioning"] or any(v["mgmt"] for v in vlans),
           "at least one VLAN must have mgmt=true (WebUI/SSH access), or enable wan.commissioning")
-    _tempmon(cfg, vlans)
     web = cfg.setdefault("webui", {})
     web.setdefault("port", 8443)
     _need(web["port"] == 8443, "webui.port is fixed at 8443")
