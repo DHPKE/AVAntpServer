@@ -301,6 +301,10 @@ check('VLANS tab: the static VLAN still has its input field', await ev(`[...docu
 check('VLANS tab: the received address is not an editable field', await ev(`![...document.querySelectorAll('tbody tr')][1].querySelector('input[placeholder="10.20.0.2/24"]')`))
 await ev(`[...document.querySelectorAll('.btn.ghost')].find(b=>b.textContent.includes('ADD VLAN')).click()`); await sleep(300)
 check('VLANS tab: a new, unsaved DHCP row says it is not applied yet', (await text()).includes('not applied yet'))
+t = await text()
+check('VLANS tab: the Temp Monitor cards are there (Node-RED page, sensors, router)', ['temp monitor (node-red)', 'sensors (ste2, snmp)', 'sms router (rut240)'].every(k => t.toLowerCase().includes(k)), t.slice(0, 200))
+check('Temp Monitor is off by default', await ev(`(() => { const c = [...document.querySelectorAll('.card')].find(x => x.textContent.includes('Allow Temp Monitor')); return !!c && !c.querySelector('input[type=checkbox]').checked })()`))
+check('Temp Monitor VLAN choices list the configured VLANs', await ev(`(() => { const c = [...document.querySelectorAll('.card')].find(x => x.textContent.includes('Allow Temp Monitor')); return [...c.querySelectorAll('select option')].some(o => o.textContent.includes('Dante Prim')) })()`))
 await tab('MONITOR'); await sleep(400)
 
 // LOG tab: the journal in the browser, and a warning after an unclean restart

@@ -85,6 +85,19 @@ class WebTest(unittest.TestCase):
         st, d, _ = self.req("PUT", "/api/config", {"wan": 5}, cookie=ck, csrf=csrf)
         self.assertEqual(st, 400)
 
+    def test_temp_monitor_settings_roundtrip_and_validation(self):
+        st, ck, csrf = self.login()
+        c = json.loads(json.dumps(BASE))
+        c["tempmon"] = {"enabled": True, "ui_vlan": 10, "sensor_vlan": 20, "sensors": ["10.20.0.101"],
+                        "rut240": {"ip": "", "vlan": None}}
+        self.assertEqual(self.req("PUT", "/api/config", c, cookie=ck, csrf=csrf)[0], 200)
+        st, d, _ = self.req("GET", "/api/config", cookie=ck)
+        self.assertEqual(d["pending"]["tempmon"]["sensors"], ["10.20.0.101"])
+        self.assertTrue(d["pending"]["tempmon"]["enabled"])
+        c["tempmon"]["sensors"] = ["10.99.0.1"]               # not on VLAN 20's network
+        self.assertEqual(self.req("PUT", "/api/config", c, cookie=ck, csrf=csrf)[0], 400)
+        self.req("PUT", "/api/config", BASE, cookie=ck, csrf=csrf)
+
     def test_wrong_password_and_rate_limit(self):
         for _ in range(5):
             self.assertEqual(self.login("nope nope nope")[0], 401)
