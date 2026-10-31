@@ -5,6 +5,7 @@ POST /api/apply asks the separate root helper (avantp apply) to put it on the sy
 and rolls back by itself unless POST /api/confirm arrives in time. This process never needs root.
 """
 import copy
+import hmac
 import http.server
 import json
 import logging
@@ -242,7 +243,7 @@ def make_handler(app):
             tok, s = self.session()
             if not s:
                 return self.err(401, "login required")
-            if self.headers.get("X-CSRF") != s["csrf"]:
+            if not hmac.compare_digest(self.headers.get("X-CSRF") or "", s["csrf"]):
                 return self.err(403, "bad CSRF token")
             if post and path == "/api/logout":
                 app.sessions.drop(tok)
