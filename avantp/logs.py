@@ -32,25 +32,27 @@ def _journalctl(args, timeout=8):
     return out, None
 
 
-# Our own services print to stderr, which systemd stores as priority "info" whatever the line says ("timecode: WARNING ...").
-# So the level filter cannot trust the journal's priority alone: for avantp-* units the level word in the text counts too.
-ERR_TEXT = re.compile(r"\b(ERROR|CRITICAL|Traceback|unhandled exception)\b")
-WARN_TEXT = re.compile(r"\bWARNING\b")
+# The Log tab colours a line red or yellow by its words (ui/app.js logCls). The level filter must agree with what the
+# user sees: a line shown in red ("Art-Net error ...", "login failed") belongs under "Errors only" even when the journal
+# stored it as info or warning (our own services print to stderr, which systemd stores as priority "info").
+# Keep these two patterns in step with logCls.
+ERR_TEXT = re.compile(r"traceback|exception|error|fail|panic|segfault|oom|crit|killed|unhandled", re.I)
+ERR_NOT = re.compile(r"error: 0|no error", re.I)
+WARN_TEXT = re.compile(r"warn|degraded|timed out|link is down|downgraded|denied|rolling back|not confirmed", re.I)
 MAX_SCAN = 5000
 
 
 def severity(entry):
-    """0 (emergency) .. 7 (debug) for a journal entry; our own services also count by the level word in the text."""
+    """0 (emergency) .. 7 (debug) for a journal entry: the journal's priority, or worse if the text looks like an error/warning."""
     try:
         prio = int(entry.get("PRIORITY", 6))
     except (TypeError, ValueError):
         prio = 6
-    if str(entry.get("_SYSTEMD_UNIT", "")).startswith("avantp-"):
-        msg = _message(entry)
-        if ERR_TEXT.search(msg):
-            prio = min(prio, 3)
-        elif WARN_TEXT.search(msg):
-            prio = min(prio, 4)
+    msg = _message(entry)
+    if ERR_TEXT.search(msg) and not ERR_NOT.search(msg):
+        prio = min(prio, 3)
+    elif WARN_TEXT.search(msg):
+        prio = min(prio, 4)
     return prio
 
 

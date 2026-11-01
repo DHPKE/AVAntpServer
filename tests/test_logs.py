@@ -52,7 +52,7 @@ class TailTest(unittest.TestCase):
             entry("Traceback (most recent call last):"),
             entry('  File "x.py", line 3, in tick'),
             entry("10.1.10.2 \"GET /api/status HTTP/1.1\" 200 -"),
-            entry("login failed for 'admin' from 10.1.10.9", unit="avantp-web.service"),        # no level word, info: not shown
+            entry("login failed for 'admin' from 10.1.10.9", unit="avantp-web.service"),        # no level word, but "failed": counts as an error
         )
         with run_with(data):
             warn = logs.tail("all", "warning", 100, 0)["lines"]
@@ -71,12 +71,29 @@ class TailTest(unittest.TestCase):
         self.assertNotIn("rolling back", err)                                              # a warning is not an error
         self.assertNotIn("Art-Net no-address", err)
 
+    def test_errors_only_agrees_with_the_red_lines_of_the_log_tab(self):
+        """A line the UI shows in red (error/fail words) must be found by 'Errors only', whatever level word or priority it has."""
+        data = journal(
+            entry("timecode: WARNING VLAN 10 X: Art-Net error (send failed: the firewall blocked the packet)"),
+            entry("web: WARNING login failed for 'admin' from 10.1.10.2"),
+            entry("timecode: WARNING VLAN 50 X: Art-Net no-address (waiting for an IP address)"),
+            entry("timecode: INFO sender started, error: 0"),
+        )
+        with run_with(data):
+            err = "\n".join(logs.tail("all", "error", 100, 0)["lines"])
+            warn = "\n".join(logs.tail("all", "warning", 100, 0)["lines"])
+        self.assertIn("Art-Net error", err)
+        self.assertIn("login failed", err)
+        self.assertNotIn("no-address", err)
+        self.assertIn("no-address", warn)
+        self.assertNotIn("sender started", warn)
+
     def test_real_journal_priorities_count_for_every_unit(self):
         data = journal(
             entry("carrier lost", prio="4", unit="systemd-networkd.service", ident="systemd-networkd"),
             entry("Reconfiguring", prio="6", unit="systemd-networkd.service"),
             entry("DHCP failed", prio="3", unit="systemd-networkd.service"),
-            entry("something said ERROR in chrony text only", prio="6", unit="chrony.service"),      # not ours: text is ignored
+            entry("something said ERROR in chrony text only", prio="6", unit="chrony.service"),      # the words count for every unit
             entry("kernel: Hardware Error", prio="3", unit=""),
         )
         with run_with(data):
@@ -85,7 +102,7 @@ class TailTest(unittest.TestCase):
         self.assertIn("DHCP failed", warn)
         self.assertIn("Hardware Error", warn)
         self.assertNotIn("Reconfiguring", warn)
-        self.assertNotIn("chrony text only", warn)
+        self.assertIn("chrony text only", warn)
         with run_with(data):
             err = "\n".join(logs.tail("network", "error", 100, 0)["lines"])
         self.assertIn("DHCP failed", err)
