@@ -261,3 +261,16 @@ class BootsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FilteredSearchTest(unittest.TestCase):
+    def test_a_level_filter_searches_the_whole_boot_by_priority_and_by_words(self):
+        with run_with("") as m:
+            logs.tail("all", "error", 100, 0)
+        calls = [c[0][0] for c in m.call_args_list]
+        self.assertEqual(len(calls), 2)
+        self.assertIn("-p", calls[0])
+        self.assertEqual(calls[0][calls[0].index("-p") + 1], "3")
+        self.assertIn("--grep", calls[1])
+        self.assertNotIn("warn", calls[1][calls[1].index("--grep") + 1])             # errors only: the warning words are not searched
+        self.assertTrue(all(c[c.index("-n") + 1] == str(logs.MAX_SCAN) for c in calls))

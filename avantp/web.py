@@ -122,6 +122,8 @@ def make_handler(app):
                 pass
 
         def log_message(self, fmt, *a):
+            if len(a) > 1 and str(a[0]).startswith("GET /api/") and str(a[1])[:1] == "2":
+                return                           # the open WebUI polls several times per second: successful reads would bury the journal
             log.info("%s %s", self.client_address[0], fmt % a)
 
         # ---- helpers

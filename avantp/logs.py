@@ -77,6 +77,13 @@ def _line(entry):
     return f"{ts} {entry.get('_HOSTNAME', '')} {ident}{pid}: {_message(entry)}"
 
 
+def _stamp(raw):
+    try:
+        return int(json.loads(raw).get("__REALTIME_TIMESTAMP", 0))
+    except (ValueError, TypeError, AttributeError):
+        return 0
+
+
 def tail(source="all", level="all", lines=200, boot=0, since=0):
     if source not in SOURCES or level not in LEVELS:
         raise ValueError("unknown source or level")
@@ -88,13 +95,28 @@ def tail(source="all", level="all", lines=200, boot=0, since=0):
     if not 0 <= since < time.time() + 3600:
         raise ValueError("bad since")
     limit = LEVELS[level]                                    # None, or the worst acceptable syslog number (4 or 3)
-    scan = lines if limit is None else min(MAX_SCAN, max(lines * 10, 1000))
+    scan = lines if limit is None else MAX_SCAN
     args = ["-o", "json", "-n", str(scan), "-b", str(boot)]
     if SOURCES[source] is None:
         args.append("-k")
     for u in SOURCES[source] or []:
         args += ["-u", u]
-    out, err = _journalctl(args)
+    if limit is None:
+        out, err = _journalctl(args)
+    else:
+        # Two searches over the whole boot instead of the last few thousand entries: what the journal itself stored at that
+        # priority, and what only the words say (our services log to stderr = info). Merged, then judged by severity().
+        words = "|".join(r.pattern for r in ((ERR_TEXT,) if limit == 3 else (ERR_TEXT, WARN_TEXT)))
+        out1, err = _journalctl(args + ["-p", str(limit)])
+        out2, err2 = _journalctl(args + ["--case-sensitive=false", "--grep", words])
+        err = err or err2
+        seen, rows = set(), []
+        for raw in ((out1 or "") + (out2 or "")).splitlines():
+            if raw not in seen:
+                seen.add(raw)
+                rows.append(raw)
+        rows.sort(key=_stamp)
+        out = "\n".join(rows)
     if err:
         return {"lines": [], "error": err}
     keep = []
