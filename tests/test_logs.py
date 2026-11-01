@@ -78,6 +78,7 @@ class TailTest(unittest.TestCase):
             entry("web: WARNING login failed for 'admin' from 10.1.10.2"),
             entry("timecode: WARNING VLAN 50 X: Art-Net no-address (waiting for an IP address)"),
             entry("timecode: INFO sender started, error: 0"),
+            entry('web: INFO 10.1.10.2 "GET /api/logs?source=all&level=error&boot=0 HTTP/1.1" 200 -'),   # polling is no error
         )
         with run_with(data):
             err = "\n".join(logs.tail("all", "error", 100, 0)["lines"])
@@ -85,6 +86,7 @@ class TailTest(unittest.TestCase):
         self.assertIn("Art-Net error", err)
         self.assertIn("login failed", err)
         self.assertNotIn("no-address", err)
+        self.assertNotIn("GET /api/logs", err + warn)
         self.assertIn("no-address", warn)
         self.assertNotIn("sender started", warn)
 

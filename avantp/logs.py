@@ -39,6 +39,7 @@ def _journalctl(args, timeout=8):
 ERR_TEXT = re.compile(r"traceback|exception|error|fail|panic|segfault|oom|crit|killed|unhandled", re.I)
 ERR_NOT = re.compile(r"error: 0|no error", re.I)
 WARN_TEXT = re.compile(r"warn|degraded|timed out|link is down|downgraded|denied|rolling back|not confirmed", re.I)
+REQUEST = re.compile(r'"[A-Z]+ [^"]*"')                     # an access-log request: its URL may say level=error, that is no error
 MAX_SCAN = 5000
 
 
@@ -48,7 +49,7 @@ def severity(entry):
         prio = int(entry.get("PRIORITY", 6))
     except (TypeError, ValueError):
         prio = 6
-    msg = _message(entry)
+    msg = REQUEST.sub("", _message(entry))
     if ERR_TEXT.search(msg) and not ERR_NOT.search(msg):
         prio = min(prio, 3)
     elif WARN_TEXT.search(msg):
