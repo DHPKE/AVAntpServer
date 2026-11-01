@@ -7,6 +7,7 @@ and rolls back by itself unless POST /api/confirm arrives in time. This process 
 import copy
 import hmac
 import http.server
+import ipaddress
 import json
 import logging
 import os
@@ -17,13 +18,15 @@ import traceback
 from http import cookies
 from urllib.parse import parse_qs, urlsplit
 
-from . import auth, config, logs, status
+from . import auth, config, logs, status, syncstate
 
 log = logging.getLogger("web")
 UI_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ui")
 STATIC = {"/": ("index.html", "text/html; charset=utf-8"), "/app.js": ("app.js", "text/javascript"),
-          "/vue.js": ("vue.global.prod.js", "text/javascript")}
-CSP = ("default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; "
+          "/vue.js": ("vue.global.prod.js", "text/javascript"), "/clock.js": ("clock.js", "text/javascript")}
+CLOCK_PAGE = ("clock.html", "text/html; charset=utf-8")       # the wall clock: /clock and /clock/<vlan id>, no login, read only
+CLOCK_FONTS = {"ds-digital-700.woff2", "chakra-petch-700.woff2", "oxanium-700.woff2", "share-tech-mono-400.woff2"}
+CSP = ("default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self'; "
        "connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
 MAX_BODY = 256 * 1024
 CONN_TIMEOUT = 20                     # seconds a connection may sit idle (TLS handshake, request line, body)
@@ -58,6 +61,35 @@ class App:
 
     def active(self):
         return self._read("config.json", self.etc)
+
+    def clock_vlans(self):
+        return (self.active() or {}).get("vlans", [])
+
+    def clock(self, vid):
+        """What a wall clock needs: the VLAN's zone and look, the server's time, and whether the time can be trusted.
+        None for an unknown VLAN. `connected`/`serving` come from the watchdog (None while it is not running)."""
+        v = next((x for x in self.clock_vlans() if x.get("id") == vid), None)
+        if v is None:
+            return None
+        try:
+            settings = config.clock_settings(v.get("clock"), vid)
+        except config.ConfigError:
+            settings = dict(config.CLOCK_DEFAULT)
+        now = time.time()
+        wan = syncstate.read_wan(now)
+        return {"id": vid, "name": v.get("name", ""), "timezone": v.get("timezone", "UTC"), "settings": settings,
+                "time_ms": int(now * 1000), "connected": None if wan is None else bool(wan.get("connected")),
+                "serving": wan is None or wan.get("serving") is not False}
+
+    def clock_home(self, local_ip):
+        """The VLAN whose own address the request came in on (its clock is the one that screen wants), or None."""
+        for v in self.clock_vlans():
+            try:
+                if v.get("mode") == "static" and ipaddress.ip_interface(v["address"]).ip == ipaddress.ip_address(local_ip):
+                    return v["id"]
+            except (KeyError, ValueError):
+                continue
+        return None
 
     def timecode_status(self):
         """What the timecode service reports; it counts as running only if it wrote the file in the last 5 seconds."""
@@ -183,12 +215,40 @@ def make_handler(app):
         def do_GET(self):
             self.guarded(self._get)
 
+        def wall_clock(self, path):
+            """The public, read-only wall clock. True when the request was one of its own."""
+            if path == "/clock":
+                home = app.clock_home(self.connection.getsockname()[0])
+                if home is not None:
+                    self.send(302, b"", "text/plain", (("Location", f"/clock/{home}"),))
+                    return True
+            if path == "/clock" or (path.startswith("/clock/") and path[7:].isdigit()):
+                name, ctype = CLOCK_PAGE
+                with open(os.path.join(UI_DIR, name), "rb") as f:
+                    self.send(200, f.read(), ctype)
+            elif path.startswith("/fonts/") and path[7:] in CLOCK_FONTS:
+                with open(os.path.join(UI_DIR, "fonts", path[7:]), "rb") as f:
+                    self.send(200, f.read(), "font/woff2")
+            elif path == "/api/clock":
+                self.send(200, {"vlans": [{"id": v["id"], "name": v.get("name", "")} for v in app.clock_vlans()]})
+            elif path.startswith("/api/clock/") and path[11:].isdigit():
+                info = app.clock(int(path[11:]))
+                if info:
+                    self.send(200, info)
+                else:
+                    self.err(404, "no such VLAN")
+            else:
+                return False
+            return True
+
         def _get(self):
             path = self.path.split("?")[0]
             if path in STATIC:
                 name, ctype = STATIC[path]
                 with open(os.path.join(UI_DIR, name), "rb") as f:
                     return self.send(200, f.read(), ctype)
+            if self.wall_clock(path):
+                return
             tok, s = self.session()
             if path == "/api/session":
                 return self.send(200, {"user": s["user"], "csrf": s["csrf"], "version": version()} if s else {"user": None,

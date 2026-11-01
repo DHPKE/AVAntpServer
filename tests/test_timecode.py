@@ -361,6 +361,22 @@ class SenderTest(unittest.TestCase):
         st = json.load(open(self.status))
         self.assertTrue(all(v["artnet"]["state"] == "off" and v["mtc_rtp"]["state"] == "off" for v in st["vlans"]))
 
+    def test_nothing_is_sent_while_the_hold_time_without_an_upstream_is_used_up(self):
+        from unittest import mock
+
+        def mutate(c):
+            c["vlans"][1]["timecode"] = {"artnet": True, "mtc_rtp": True, "fps": 25}
+        self.write_cfg(mutate)
+        s = tcm.Sender(self.cfg_path, self.status, dest_override=("127.0.0.1", "127.0.0.1", self.port))
+        with mock.patch.object(tcm.syncstate, "read_wan", return_value={"serving": False}):
+            self.assertEqual(self.run_sender(s, 0.5), [])
+            s.write_status(force=True)
+            v = [x for x in json.load(open(self.status))["vlans"] if x["id"] == 20][0]
+            self.assertEqual((v["artnet"]["state"], v["mtc_rtp"]["state"]), ("held", "held"))
+        s.held_at = 0                                                                         # the watchdog says serving again
+        with mock.patch.object(tcm.syncstate, "read_wan", return_value={"serving": True}):
+            self.assertTrue(len(self.run_sender(s, 0.5)) > 5)
+
     def test_one_packet_per_frame_in_the_vlans_own_time_zone(self):
         def mutate(c):
             c["vlans"][1]["timecode"] = {"artnet": True, "mtc_rtp": False, "fps": 25}        # VLAN 20, New York

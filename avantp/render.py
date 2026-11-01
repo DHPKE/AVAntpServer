@@ -17,20 +17,22 @@ def chrony(cfg):
         "driftfile /var/lib/chrony/chrony.drift\n"
         "makestep 1.0 3\n"
         "rtcsync\n"
-        "leapsectz right/UTC\n"
         "bindcmdaddress 127.0.0.1\n"
         "bindcmdaddress ::1\n"
         "ratelimit interval 1 burst 16 leak 2\n"
     )
-    serving = [v for v in cfg["vlans"] if v["ntp"]]
-    if any(v["mode"] == "dhcp" for v in serving):
-        out.append("allow all\n")  # DHCP VLAN subnets are unknown here; nftables restricts by interface
-    else:
-        for v in serving:
-            out.append(f"allow {v['_if'].network}\n")
+    out.extend(f"{rule}\n" for rule in chrony_access(cfg))
     if up["local_fallback"]:
         out.append("local stratum 10 orphan\n")
     return "".join(out)
+
+
+def chrony_access(cfg):
+    """chronyd's `allow` rules. The watchdog hands exactly these back (chronyc allow ...) after a hold-time stop."""
+    serving = [v for v in cfg["vlans"] if v["ntp"]]
+    if any(v["mode"] == "dhcp" for v in serving):
+        return ["allow all"]  # DHCP VLAN subnets are unknown here; nftables restricts by interface
+    return [f"allow {v['_if'].network}" for v in serving]
 
 
 def _is_ip(h):
@@ -70,6 +72,12 @@ def networkd(cfg):
                      "UseHostname=no\nUseDomains=no\nSendHostname=no\n")
         files[f"30-avantp-{v['iface']}.network"] = "".join(n)
     return files
+
+
+def ifupdown():
+    """/etc/network/interfaces for a box whose interfaces all belong to systemd-networkd: loopback only. The installer's
+    'allow-hotplug <wan> / inet dhcp' stanza would let udev start ifup@<wan> (dhcpcd) at every boot, next to networkd."""
+    return HDR + "auto lo\niface lo inet loopback\n"
 
 
 def sysctl(cfg):
@@ -168,6 +176,7 @@ def render_all(cfg):
         "etc/chrony/chrony.conf": chrony(cfg),
         "etc/sysctl.d/90-avantp.conf": sysctl(cfg),
         "etc/avantp/nftables.nft": nftables(cfg),
+        "etc/network/interfaces": ifupdown(),
     }
     for name, body in networkd(cfg).items():
         files[f"etc/systemd/network/{name}"] = body

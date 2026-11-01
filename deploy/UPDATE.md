@@ -77,4 +77,4 @@ The next normal update (button or script) returns to the newest version by itsel
 | Source clone used for updates | `~/AVAntpServer-src` |
 | Update script | `/opt/avantp/deploy/update.sh` (this file: `/opt/avantp/deploy/UPDATE.md`, after the next update) |
 | Your settings | `/etc/avantp/config.json` (active), `/var/lib/avantp/` (users, certificate, saved changes) |
-| Logs | WebUI -> LOG, or `sudo journalctl -u avantp-web -u avantp-apply -u avantp-timecode -n 100` |
+| Logs | WebUI -> LOG, or `sudo journalctl -u avantp-web -u avantp-apply -u avantp-timecode -u avantp-heal -n 100` |

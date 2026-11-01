@@ -161,6 +161,9 @@ def main(argv):
         return 0
     if len(argv) == 2 and argv[1] == "timecode":
         return run_timecode()
+    if len(argv) == 2 and argv[1] == "heal":
+        from . import heal
+        return heal.main(os.path.join(paths()[1], "config.json"))
     if len(argv) >= 2 and argv[1] == "software":
         return run_software(argv[2:])
     if len(argv) >= 2 and argv[1] == "update-mode":

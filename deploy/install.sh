@@ -123,10 +123,10 @@ fi
 
 if [ -n "$SD" ]; then
   systemctl enable avantp-recover.service avantp-nftables.service avantp-apply.path avantp-update.path avantp-software.path >/dev/null 2>&1
-  systemctl enable --now avantp-web.service avantp-apply.path avantp-update.path avantp-software.path avantp-timecode.service
-  systemctl restart avantp-web.service avantp-timecode.service   # a re-run must not leave the old code running in memory
+  systemctl enable --now avantp-web.service avantp-apply.path avantp-update.path avantp-software.path avantp-timecode.service avantp-heal.service
+  systemctl restart avantp-web.service avantp-timecode.service avantp-heal.service   # a re-run must not leave the old code running in memory
   sleep 1
-  systemctl is-active avantp-web.service avantp-apply.path avantp-update.path avantp-software.path avantp-timecode.service
+  systemctl is-active avantp-web.service avantp-apply.path avantp-update.path avantp-software.path avantp-timecode.service avantp-heal.service
 fi
 echo "installed version $V: $(chronyd --version | head -1 | cut -c1-30), $(nft --version)"
 echo "WebUI: https://$(hostname -I | awk '{print $1}'):8443   (network and firewall are unchanged until you APPLY)"

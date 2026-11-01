@@ -70,6 +70,18 @@ for (let i = 0; i < 20 && !(await text()).includes('ntp1.example.org'); i++) awa
 t = await text(); check('login works, monitor shown', t.includes('MONITOR') && t.includes('SYNCED'), t.slice(0, 160))
 check('live pill', t.includes('LIVE'))
 check('tracking data shown (offset 12 us, stratum 3)', t.includes('12') && t.includes('Stratum 3'), t.slice(0, 300))
+// no internet: the watchdog's status file says so, and the page must say it too (red, infinity) until the internet is back
+const wan = up => { mkdirSync(`${D}/run-heal`, {recursive: true}); writeFileSync(`${D}/run-heal/status.json`, JSON.stringify({t: Date.now() / 1000, route: up, connected: up, server: up ? 'ntp1.example.org' : null, serving: true, stop_at: null})) }
+const waitText = async re => { for (let i = 0; i < 20 && !re.test(await text()); i++) await sleep(400); return text() }
+const accuracyColor = () => ev(`getComputedStyle([...document.querySelectorAll('.card')].find(c => c.querySelector('.lbl')?.textContent === 'Accuracy').querySelector('.big')).color`)
+const isRed = c => { const [r, g, b] = c.match(/\d+/g).map(Number); return r > 180 && g < 120 && b < 120 }
+const bluish = await accuracyColor()
+wan(false); t = await waitText(/NO CONNECTION/)
+check('no internet: the sync card says NO CONNECTION and no longer SYNCED', t.includes('NO CONNECTION') && !/\bSYNCED\b/.test(t), t.slice(0, 300))
+check('no internet: accuracy is infinity, in red', t.includes('∞') && isRed(await accuracyColor()), await accuracyColor())
+await shot('1b-no-connection')
+wan(true); t = await waitText(/\bSYNCED\b/)
+check('internet back: SYNCED again, accuracy a number in its normal colour', t.includes('SYNCED') && !t.includes('NO CONNECTION') && (await accuracyColor()) === bluish, await accuracyColor())
 // the Upstream sources card starts folded, with a summary; unfold it to look at the servers
 const srcOpen = () => ev(`[...document.querySelectorAll('.card')].some(c => c.textContent.includes('Upstream sources') && c.querySelector('table'))`)
 check('upstream sources: folded by default', !(await srcOpen()) && !t.includes('time.cloudflare.com'), t.slice(t.indexOf('UPSTREAM'), t.indexOf('UPSTREAM') + 120))
@@ -303,6 +315,10 @@ await ev(`[...document.querySelectorAll('.btn.ghost')].find(b=>b.textContent.inc
 check('VLANS tab: a new, unsaved DHCP row says it is not applied yet', (await text()).includes('not applied yet'))
 t = await text()
 check('VLANS tab: the Node-RED card has both switches, off by default', t.toLowerCase().includes('open the node-red page (port 1880)') && t.toLowerCase().includes('allow palette installs') && await ev(`(() => { const c = [...document.querySelectorAll('.card')].find(x => x.textContent.includes('Open the Node-RED page')); return !!c && [...c.querySelectorAll('input[type=checkbox]')].length === 2 && ![...c.querySelectorAll('input[type=checkbox]')].some(i => i.checked) })()`), t.slice(0, 200))
+check('VLANS tab: every VLAN has its clock display settings and a link to its clock', t.toLowerCase().includes('clock displays') && await ev(`(() => { const b = document.querySelector('.cset'); const l = b.querySelector('a')
+  return b.querySelectorAll('input[type=checkbox]').length === 10 && b.querySelectorAll('select').length === 3 && b.querySelectorAll('input[type=color]').length === 2 && /^\\/clock\\/\\d+$/.test(l.getAttribute('href')) && l.target === '_blank' })()`))
+const saved = await ev(`fetch('/api/config').then(r => r.json())`)
+check('VLANS tab: the clock settings were saved with the VLANs (server accepted the UI payload)', (saved.pending || saved.active).vlans.every(v => v.clock && v.clock.font === 'ds-digital' && v.clock.seconds === true), JSON.stringify((saved.pending || saved.active).vlans[0]))
 await tab('MONITOR'); await sleep(400)
 
 // LOG tab: the journal in the browser, and a warning after an unclean restart
@@ -359,6 +375,50 @@ check('upstream sources: click unfolds it again', await srcShown() && (await tex
 
 await click('.sub .btn'); await sleep(800)
 t = await text(); check('logout returns to login', t.includes('LOGIN') && !t.includes('MONITOR'))
+// the wall clock: public (we are logged out), one page per VLAN, honest about what it knows
+const list = (await ev(`fetch('/api/clock').then(r => r.json())`)).vlans
+check('wall clock: the VLAN list is public', list.length > 0, JSON.stringify(list))
+const cv = list[list.length - 1]
+const clock = async (query = '') => { await send('Page.navigate', {url: `${URL}clock/${cv.id}${query}`}); await sleep(1500) }
+const clockNow = () => ev(`(() => { const g = id => document.getElementById(id).textContent
+  return {time: g('time'), date: g('date'), sub: g('sub'), warn: g('warn'), fg: getComputedStyle(document.getElementById('time')).color,
+          fs: !document.getElementById('fs').hidden, size: parseFloat(getComputedStyle(document.getElementById('time')).fontSize), w: document.getElementById('time').scrollWidth,
+          sizes: ['time', 'date', 'sub', 'warn'].map(id => getComputedStyle(document.getElementById(id)).fontSize).join(' '),
+          box: JSON.stringify(document.getElementById('time').getBoundingClientRect())} })()`)
+const heal = o => { mkdirSync(`${D}/run-heal`, {recursive: true}); writeFileSync(`${D}/run-heal/status.json`, JSON.stringify(Object.assign({t: Date.now() / 1000, route: true, connected: true, server: 'x', serving: true, stop_at: null}, o))) }
+heal({})
+await clock('?name=1')
+const stable = []                    // the layout must not move: the same font sizes and the same time block for every digit and state
+const rec = async () => { const x = await clockNow(); stable.push(x); return x }
+let c = await rec()
+for (let i = 0; i < 6; i++) { await sleep(700); await rec() }       // the digits change while we watch
+check('wall clock: time as HH:MM:SS, without a login', /^\d\d:\d\d:\d\d$/.test(c.time), JSON.stringify(c))
+check('wall clock: weekday, day, month and year', /^[A-Za-z]+,? \d{1,2} [A-Za-z]+ \d{4}$/.test(c.date), JSON.stringify(c))
+check('wall clock: VLAN name and zone line', c.sub.includes(cv.name) && c.sub.includes('\u00b7'), JSON.stringify(c))
+check('wall clock: no warning while connected, full-screen button present', c.warn === '' && c.fs, JSON.stringify(c))
+check('wall clock: the digits fill most of the screen and fit in it', c.w > 1400 * .7 && c.w <= 1400 * .95, JSON.stringify(c))
+await shot('9-wall-clock')
+await clock('?seconds=0&weekday=0&month_style=numeric&fg=ff9900&hours12=1')
+c = await clockNow()
+check('wall clock: URL switches elements off (no seconds, numeric date, no weekday, 12 h)', /^\d\d:\d\d[AP]M$/.test(c.time) && /^\d\d\/\d\d\/\d{4}$/.test(c.date), JSON.stringify(c))
+check('wall clock: URL sets the colour', c.fg === 'rgb(255, 153, 0)', c.fg)
+await clock('?lang=de&month_style=short')
+c = await clockNow()
+check('wall clock: German date', /^[A-Za-z]+, \d{1,2}\. [A-Za-z]+\.? \d{4}$/.test(c.date), JSON.stringify(c))
+heal({connected: false}); await sleep(3500)
+c = await rec()
+check('wall clock: no upstream is shown as a warning, the time stays', /NO UPSTREAM/.test(c.warn) && /^\d\d:\d\d:\d\d$/.test(c.time), JSON.stringify(c))
+await shot('9b-wall-clock-no-upstream')
+heal({connected: false, serving: false}); await sleep(3500)
+c = await rec()
+check('wall clock: stopped (hold time used up) shows dashes and no date', c.time === '--:--:--' && c.date === '' && /STOPPED/.test(c.warn), JSON.stringify(c))
+heal({}); await sleep(3500)
+c = await rec()
+check('wall clock: back to the time by itself', /^\d\d:\d\d:\d\d$/.test(c.time) && c.warn === '', JSON.stringify(c))
+check('wall clock: font sizes and the time block never change (digits ticking, warning on and off, dashes)',
+  new Set(stable.map(x => x.sizes)).size === 1 && new Set(stable.map(x => x.box)).size === 1, JSON.stringify([...new Set(stable.map(x => x.sizes + ' ' + x.box))]))
+await send('Page.navigate', {url: `${URL}clock`}); await sleep(1200)
+check('wall clock: /clock without a VLAN lists the clocks', (await text()).includes(`VLAN ${cv.id}`), (await text()).slice(0, 100))
 const real = errors.filter(e => !/status of 40[0-9]/.test(e)); check('no JS errors (expected 400/401 from deliberate bad requests ignored)', real.length === 0, real.join(' | '))
 console.log(results.every(Boolean) ? 'ALL PASS' : 'SOME FAILED', `(${results.filter(Boolean).length}/${results.length})`)
 udp.close(); mtcPeer.ctrl.close(); mtcPeer.data.close(); ws.close(); chrome.kill()

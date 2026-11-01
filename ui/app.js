@@ -150,11 +150,24 @@ createApp({setup() {
     for (const k of [draft.value && draft.value.wan.iface, draft.value && draft.value.lan.iface]) if (k && !n.includes(k)) n.push(k)
     return n
   })
-  const synced = computed(() => tr.value && tr.value.stratum < 16 && tr.value.ref_id !== '00000000')
-  const syncCls = computed(() => !chronyRunning.value ? 'bad' : synced.value ? 'ok' : 'warn')
-  const syncTxt = computed(() => !chronyRunning.value ? 'badc' : synced.value ? 'good' : 'warnc')
-  const syncIcon = computed(() => !chronyRunning.value ? '✕' : synced.value ? '✓' : '…')
-  const syncName = computed(() => !chronyRunning.value ? 'STOPPED' : synced.value ? 'SYNCED' : 'NOT SYNCED')
+  // the verdict comes from the server (status.sync_state): chrony's tracking alone says "synced" for days after the last source went silent
+  const sync = computed(() => status.value && status.value.chrony.sync)
+  const synced = computed(() => !!sync.value && sync.value.state === 'synced')
+  const offline = computed(() => !!sync.value && sync.value.state === 'offline')     // no connection to any upstream server
+  const localClock = computed(() => !!sync.value && sync.value.state === 'local')
+  const clockText = computed(() => !chronyRunning.value ? 'chrony stopped' : synced.value ? 'synchronised' : localClock.value ? 'free-running (no upstream)' : 'not synchronised')
+  const syncCls = computed(() => !chronyRunning.value || offline.value ? 'bad' : synced.value ? 'ok' : 'warn')
+  const syncTxt = computed(() => !chronyRunning.value || offline.value ? 'badc' : synced.value ? 'good' : 'warnc')
+  const syncIcon = computed(() => !chronyRunning.value || offline.value ? '✕' : synced.value ? '✓' : '…')
+  const syncName = computed(() => !chronyRunning.value ? 'STOPPED' : offline.value ? 'NO CONNECTION' : synced.value ? 'SYNCED' : localClock.value ? 'LOCAL CLOCK' : 'NOT SYNCED')
+  const refName = t => t.ref_host || t.ref_name || t.ref_id
+  const selectedSource = computed(() => synced.value ? sources.value.find(x => x.state === '*') : null)
+  const syncMeta = computed(() => {
+    if (!tr.value || !sync.value) return '—'
+    if (synced.value) return 'Stratum ' + tr.value.stratum + ' · ' + refName(tr.value)
+    if (offline.value) return 'Internet not reachable · last sync ' + lastUpdate.value
+    return sync.value.reachable + ' of ' + sync.value.total + ' servers reachable · no upstream selected' + (localClock.value ? '' : ' · last: ' + refName(tr.value))
+  })
   function fmtS(s) {
     const a = Math.abs(s)
     if (a < 1e-6) return (s * 1e9).toFixed(0) + ' ns'
@@ -164,10 +177,31 @@ createApp({setup() {
   }
   const off = computed(() => {
     if (!tr.value) return {val: '—', unit: ''}
+    if (offline.value) return {val: '∞', unit: ''}                       // no connection: nothing bounds the error
     const [v, u] = fmtS(tr.value.offset_s).split(' ')
     return {val: v, unit: u}
   })
-  const offCls = computed(() => !tr.value ? '' : Math.abs(tr.value.offset_s) < 1e-3 ? 'good' : Math.abs(tr.value.offset_s) < 0.05 ? 'warnc' : 'badc')
+  // what the sync and accuracy cards print besides the offset: with no connection, what describes the upstream is
+  // either not measurable (—) or unbounded (∞); frequency and skew describe the local oscillator and stay true
+  const trkView = computed(() => {
+    const t = tr.value
+    if (!t) return {leap: '—', interval: '—', freq: '—', rms: '—', skew: '—', delay: '—', disp: '—'}
+    const gone = offline.value
+    return {leap: gone ? '—' : t.leap, interval: gone ? '—' : t.update_interval_s.toFixed(0) + ' s', freq: t.freq_ppm.toFixed(3) + ' ppm',
+      rms: gone ? '∞' : fmtS(t.rms_offset_s), skew: t.skew_ppm.toFixed(3) + ' ppm',
+      delay: gone ? '—' : fmtS(t.root_delay_s), disp: gone ? '∞' : fmtS(t.root_dispersion_s)}
+  })
+  // the hold time without an upstream (settings: NTP tab): counts down on the sync card, then NTP, Art-Net and MTC stop
+  const holdText = computed(() => {
+    const y = sync.value
+    if (!y || synced.value || !chronyRunning.value) return ''
+    if (!y.serving) return 'Hold time used up: NTP, Art-Net and MTC are stopped'
+    if (!y.stop_at) return ''
+    const m = Math.max(0, Math.ceil((y.stop_at - utcMs.value / 1000) / 60))
+    return 'NTP, Art-Net and MTC stop in ' + (m >= 90 ? Math.round(m / 60) + ' h' : m + ' min')
+  })
+  const offText = computed(() => synced.value ? 'system offset to upstream NTP' : offline.value ? 'no upstream: the error is unbounded' : 'offset when last synchronised, not current')
+  const offCls = computed(() => !tr.value || !synced.value ? '' : Math.abs(tr.value.offset_s) < 1e-3 ? 'good' : Math.abs(tr.value.offset_s) < 0.05 ? 'warnc' : 'badc')
 
   // ---- time helpers
   const utcMs = computed(() => now.value + skew.value)
@@ -239,7 +273,7 @@ createApp({setup() {
   const lastUpdate = computed(() => {
     if (!tr.value || !tr.value.ref_time) return '—'
     const t = Math.max(0, Math.round(utcMs.value / 1000 - tr.value.ref_time))
-    return t < 90 ? t + ' s ago' : Math.round(t / 60) + ' min ago'
+    return t < 90 ? t + ' s ago' : t < 5400 ? Math.round(t / 60) + ' min ago' : t < 172800 ? Math.round(t / 3600) + ' h ago' : Math.round(t / 86400) + ' d ago'
   })
   const utcDate = computed(() => new Date(utcMs.value).toISOString().slice(0, 10))
   const NOT = {state: 'off'}
@@ -265,6 +299,7 @@ createApp({setup() {
       artnet = !tc.value.running ? 'service not running' :
         a.state === 'sending' ? 'sending ' + (t.fps || 25) + ' fps \u2192 ' + a.dest :
         a.state === 'no-address' ? 'waiting for an IP address' :
+        a.state === 'held' ? 'stopped: no upstream for too long' :
         a.state === 'error' ? 'error: ' + a.error : 'starting\u2026'
     }
     const m = tcStat(v).mtc_rtp || NOT
@@ -273,15 +308,16 @@ createApp({setup() {
         m.state === 'sending' ? 'sending ' + (m.fps || t.fps) + ' fps to ' + m.peers.length + ' receiver' + (m.peers.length === 1 ? '' : 's') + ': ' + m.peers.map(p => p.ip).join(', ') :
         m.state === 'listening' ? 'ready on ' + m.listen + ' (session "' + m.name + '"): connect a receiver to this address' :
         m.state === 'no-address' ? 'waiting for an IP address' :
+        m.state === 'held' ? 'stopped: no upstream for too long' :
         m.state === 'error' ? 'error: ' + m.error : 'starting…'
     }
     return {artnet, mtc}
   }
   function tcCls(v) {
     const t = v.timecode || {}, a = tcStat(v).artnet || NOT
-    return {artnet: !t.artnet ? '' : (tc.value.running && a.state === 'sending') ? 'good' : a.state === 'error' ? 'badc' : 'warnc',
+    return {artnet: !t.artnet ? '' : (tc.value.running && a.state === 'sending') ? 'good' : a.state === 'error' || a.state === 'held' ? 'badc' : 'warnc',
             mtc: !t.mtc_rtp ? '' : (tc.value.running && (tcStat(v).mtc_rtp || NOT).state === 'sending') ? 'good' :
-                 (tcStat(v).mtc_rtp || NOT).state === 'error' ? 'badc' : (tcStat(v).mtc_rtp || NOT).state === 'listening' ? '' : 'warnc'}
+                 ['error', 'held'].includes((tcStat(v).mtc_rtp || NOT).state) ? 'badc' : (tcStat(v).mtc_rtp || NOT).state === 'listening' ? '' : 'warnc'}
   }
 
   // ---- config
@@ -339,12 +375,18 @@ createApp({setup() {
     const wan = (physical.value.find(i => i.state === 'up' && i.addrs.length) || {}).name || n[0] || ''
     const lan = n.find(x => x !== wan) || ''
     return {wan: {iface: wan, mode: 'dhcp', commissioning: true}, lan: {iface: lan},
-            upstream: {default: ['pool.ntp.org'], backup: ['time.cloudflare.com'], custom: [], local_fallback: false}, vlans: []}
+            upstream: {default: ['pool.ntp.org'], backup: ['time.cloudflare.com'], custom: [], local_fallback: false, holdover_hours: null}, vlans: []}
   }
+  // what the wall clock page (/clock/<vlan>) can show; the server fills in the same defaults
+  const clockFlags = [['seconds', 'Seconds'], ['weekday', 'Weekday'], ['day', 'Day'], ['month', 'Month'], ['year', 'Year'], ['zone', 'Time zone'],
+                      ['name', 'VLAN name'], ['sync', 'Warn when there is no upstream'], ['hours12', '12-hour clock'], ['blink', 'Blinking colons']]
+  const clockDefaults = () => ({seconds: true, weekday: true, day: true, month: true, year: true, zone: true, name: false, sync: true,
+                                hours12: false, blink: true, month_style: 'long', lang: 'en', font: 'ds-digital', fg: '#00ee88', bg: '#000000'})
   function normVlan(v) {
     v.mode = v.mode || 'dhcp'; v.timezone = v.timezone || 'UTC'; delete v.utc_offset_min
     v.ntp = v.ntp !== false; v.mgmt = !!v.mgmt; v.address = v.address || ''
     v.timecode = Object.assign({artnet: false, mtc_rtp: false, fps: 25}, v.timecode || {})
+    v.clock = Object.assign(clockDefaults(), v.clock || {})
     const to = v.timecode.artnet_dest || 'broadcast'                 // the server stores one value; the form edits it as mode + address
     v.timecode.dest_mode = to === 'broadcast' ? 'broadcast' : 'unicast'
     v.timecode.dest_ip = to === 'broadcast' ? '' : to
@@ -354,7 +396,7 @@ createApp({setup() {
     const src = cfg.value.pending || cfg.value.active || blank()
     const d = JSON.parse(JSON.stringify(src))
     d.wan.commissioning = !!d.wan.commissioning
-    d.upstream = Object.assign({default: [], backup: [], custom: [], local_fallback: false}, d.upstream)
+    d.upstream = Object.assign({default: [], backup: [], custom: [], local_fallback: false, holdover_hours: null}, d.upstream)
     d.vlans = (d.vlans || []).map(normVlan)
     d.nodered = Object.assign({ui: false, palette: false, user: 'node'}, d.nodered)
     for (const k of ['default', 'backup', 'custom']) up[k] = d.upstream[k].join('\n')
@@ -364,6 +406,8 @@ createApp({setup() {
   function payload() {
     const d = JSON.parse(JSON.stringify(draft.value))
     for (const k of ['default', 'backup', 'custom']) d.upstream[k] = up[k].split('\n').map(s => s.trim()).filter(Boolean)
+    const h = d.upstream.holdover_hours
+    d.upstream.holdover_hours = h === '' || h === null || Number.isNaN(Number(h)) ? null : Math.trunc(Number(h))   // an emptied field means never stop
     for (const v of d.vlans) { if (v.mode !== 'static') delete v.address }
     for (const v of d.vlans) {
       const t = v.timecode
@@ -425,6 +469,6 @@ createApp({setup() {
   onMounted(start)
   onUnmounted(stop)
   return {dis, dismiss, logSince, clearLog, showAllLog, sw, swBusy, applyBusy, swFresh, swCls, swText, swAsk, logSel, logLines, logErr, logLoaded, logbox, boots, bootsErr, dt, logCls, loadLog, loadBoots, copyLog, restartNotice, dismissRestart, lastUpdate, dhcpState, collapsed, toggleCard, liveTc, synced, um, umLeftText, setUpdateMode, version, tabs, tab, user, needsSetup, lu, lp, loginErr, busy, connected, doLogin, doLogout, draft, up, msg, msgCls, pw,
-    ap, left, recent, applyNow, confirm, cfg, shown, tr, chronyRunning, sources, ifaces, ifaceNames, syncCls, syncTxt, syncIcon, syncName, fmtS, off, offCls, utcNow,
-    tzLabel, tzGroups, localTime, tcText, tcCls, tcStat, tc, utcDate, vlanAddr, cfgVlans, hasPending, draftDirty, wanDns, addVlan, save, changePw}
+    ap, left, recent, applyNow, confirm, cfg, shown, tr, chronyRunning, sources, ifaces, ifaceNames, syncCls, syncTxt, syncIcon, syncName, syncMeta, clockText, offline, selectedSource, offText, trkView, holdText, fmtS, off, offCls, utcNow,
+    tzLabel, tzGroups, localTime, tcText, tcCls, tcStat, tc, utcDate, vlanAddr, cfgVlans, hasPending, draftDirty, wanDns, addVlan, save, changePw, clockFlags}
 }}).mount('#app')

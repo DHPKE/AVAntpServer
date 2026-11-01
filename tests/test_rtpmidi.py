@@ -360,7 +360,7 @@ class SenderIntegrationTest(unittest.TestCase):
         peer = Peer(port)
         try:
             peer.join(s.mtc[20])
-            end = time.time() + 0.6
+            end = time.time() + 1.3                                              # the status is refreshed once a second
             got = 0
             while time.time() < end:
                 s.tick()

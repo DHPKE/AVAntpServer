@@ -25,6 +25,7 @@ header h1{font-size:13px;font-weight:700;letter-spacing:.08em;border-left:3px so
 .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;padding:16px}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;overflow:auto}
 .full{grid-column:1/-1}
+.cset{padding:12px 0;border-top:1px solid var(--border)}.cgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:6px 16px;margin:10px 0}.cpick{display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center}.cpick input[type=color]{width:44px;height:28px;padding:0}
 .lbl{font-size:9px;font-weight:700;letter-spacing:.14em;color:var(--muted);text-transform:uppercase;margin-bottom:10px}
 .ring{width:84px;height:84px;border-radius:50%;border:3px solid;display:flex;align-items:center;justify-content:center;font-size:26px;margin:0 auto 10px}
 /* a slow breath, not a flash: the glow swells and fades with ease-in-out on both halves, so it has no corners (a
@@ -46,6 +47,7 @@ header h1{font-size:13px;font-weight:700;letter-spacing:.08em;border-left:3px so
 .tdate{font-size:10px;color:var(--muted);text-align:center;margin-top:4px}
 .big{font-size:34px;font-weight:700;letter-spacing:-.02em;line-height:1}.bigunit{font-size:15px;font-weight:400;margin-left:3px}
 .bigsub{font-size:10px;color:var(--muted);margin-top:5px}
+.offline .cv,.offline .big,.offline .bigunit,.offline .tclock,.offline td,.offline .good{color:var(--red)}
 .good{color:var(--ok)}.warnc{color:var(--yellow)}.badc{color:var(--red)}
 .cr{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px}.ck{color:var(--muted);font-size:10px}.cv{font-size:10px;font-weight:600}
 .div{margin:10px 0;border-top:1px solid var(--border)}
@@ -130,33 +132,34 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
 
   <!-- MONITOR -->
   <div class="grid" v-if="tab==='monitor'">
-    <div class="card">
+    <div class="card" :class="{offline}">
       <div class="lbl">Sync state</div>
       <div class="ring" :class="syncCls">{{ syncIcon }}</div>
       <div class="sname" :class="syncTxt">{{ syncName }}</div>
-      <div class="smeta">Stratum {{ tr ? tr.stratum : '—' }} · {{ tr ? tr.ref_host || tr.ref_name || tr.ref_id : '—' }}</div>
+      <div class="smeta">{{ syncMeta }}</div>
+      <div class="smeta badc" v-if="holdText">{{ holdText }}</div>
       <div class="div"></div>
-      <div class="cr"><span class="ck">Leap status</span><span class="cv">{{ tr ? tr.leap : '—' }}</span></div>
-      <div class="cr"><span class="ck">Update interval</span><span class="cv">{{ tr ? tr.update_interval_s.toFixed(0)+' s' : '—' }}</span></div>
-      <div class="cr"><span class="ck">Frequency</span><span class="cv">{{ tr ? tr.freq_ppm.toFixed(3)+' ppm' : '—' }}</span></div>
+      <div class="cr"><span class="ck">Leap status</span><span class="cv">{{ trkView.leap }}</span></div>
+      <div class="cr"><span class="ck">Update interval</span><span class="cv">{{ trkView.interval }}</span></div>
+      <div class="cr"><span class="ck">Frequency</span><span class="cv">{{ trkView.freq }}</span></div>
     </div>
-    <div class="card">
+    <div class="card" :class="{offline}">
       <div class="lbl">Current time</div>
       <div class="tclock">{{ utcNow }}</div>
       <div class="tdate">{{ utcDate }} &middot; UTC</div>
       <div class="div"></div>
-      <div class="cr"><span class="ck">Clock</span><span class="cv" :class="syncTxt">{{ chronyRunning ? (synced ? 'synchronised' : 'not synchronised') : 'chrony stopped' }}</span></div>
+      <div class="cr"><span class="ck">Clock</span><span class="cv" :class="syncTxt">{{ clockText }}</span></div>
       <div class="cr"><span class="ck">Last update</span><span class="cv">{{ lastUpdate }}</span></div>
     </div>
-    <div class="card">
+    <div class="card" :class="{offline}">
       <div class="lbl">Accuracy</div>
       <div><span class="big" :class="offCls">{{ off.val }}</span><span class="bigunit" :class="offCls">{{ off.unit }}</span></div>
-      <div class="bigsub">system offset to upstream NTP</div>
+      <div class="bigsub">{{ offText }}</div>
       <div class="div"></div>
-      <div class="cr"><span class="ck">RMS offset</span><span class="cv">{{ tr ? fmtS(tr.rms_offset_s) : '—' }}</span></div>
-      <div class="cr"><span class="ck">Skew</span><span class="cv">{{ tr ? tr.skew_ppm.toFixed(3)+' ppm' : '—' }}</span></div>
-      <div class="cr"><span class="ck">Root delay</span><span class="cv">{{ tr ? fmtS(tr.root_delay_s) : '—' }}</span></div>
-      <div class="cr"><span class="ck">Root dispersion</span><span class="cv">{{ tr ? fmtS(tr.root_dispersion_s) : '—' }}</span></div>
+      <div class="cr"><span class="ck">RMS offset</span><span class="cv">{{ trkView.rms }}</span></div>
+      <div class="cr"><span class="ck">Skew</span><span class="cv">{{ trkView.skew }}</span></div>
+      <div class="cr"><span class="ck">Root delay</span><span class="cv">{{ trkView.delay }}</span></div>
+      <div class="cr"><span class="ck">Root dispersion</span><span class="cv">{{ trkView.disp }}</span></div>
     </div>
     <div class="card full">
       <div class="lbl">VLAN clocks<span v-if="!cfg.active" style="text-transform:none;letter-spacing:0"> &middot; showing the saved config, nothing is applied yet</span></div>
@@ -180,9 +183,9 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
       <div v-else class="smeta" style="text-align:left">No VLANs configured yet.</div>
       <div class="smeta" style="text-align:left;margin-top:8px">"Timecode now" is the time of day in each VLAN's own time zone, as it would be sent (once per frame). It is only transmitted for VLANs where you switched Art-Net TC on (VLANS tab, then save and apply).</div>
     </div>
-    <div class="card full">
+    <div class="card full" :class="{offline}">
       <div class="lbl fold" @click="toggleCard('sources')" title="Click to fold or unfold" role="button" tabindex="0" @keydown.enter="toggleCard('sources')" :aria-expanded="!collapsed.sources">
-        <span>Upstream sources<span v-if="collapsed.sources" style="text-transform:none;letter-spacing:0"> &middot; {{ sources.length }} server{{ sources.length === 1 ? '' : 's' }}{{ sources.filter(s => s.state === '*').length ? ', synced to ' + (sources.find(s => s.state === '*').host || sources.find(s => s.state === '*').name) : '' }}</span></span>
+        <span>Upstream sources<span v-if="collapsed.sources" style="text-transform:none;letter-spacing:0"> &middot; {{ sources.length }} server{{ sources.length === 1 ? '' : 's' }}{{ selectedSource ? ', synced to ' + (selectedSource.host || selectedSource.name) : '' }}</span></span>
         <span class="chev">{{ collapsed.sources ? '▸' : '▾' }}</span></div>
       <template v-if="!collapsed.sources">
       <table v-if="sources.length"><thead><tr><th></th><th>Server</th><th>Address</th><th>Stratum</th><th>Poll</th><th>Reach</th><th>Last rx</th><th>Offset</th></tr></thead>
@@ -250,6 +253,22 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
     <div style="margin-top:12px"><button class="btn ghost" :disabled="draft.vlans.length>=20" @click="addVlan">+ ADD VLAN</button></div>
     <div class="smeta" style="text-align:left;margin-top:10px">Timecode outputs are off by default. Art-Net goes out as a broadcast on the VLAN or as unicast to one receiver on that VLAN's own network. The time zone (pick a city, daylight saving is automatic) sets the VLAN's local time and timecode; NTP itself always carries UTC. DHCP VLANs never accept routes, DNS or NTP from the server.</div>
   </div></div>
+  <div class="grid" style="margin-top:16px"><div class="card full">
+    <div class="lbl">Clock displays</div>
+    <div class="smeta" style="text-align:left">Every VLAN has a full-screen wall clock in its own time zone, with no login: open <b>/clock</b> on the box's address on that VLAN (or <b>/clock/&lt;VLAN id&gt;</b>), press F or double-click for full screen. Changes apply after SAVE and APPLY; for a quick test add them to the address, e.g. <b>?seconds=0&amp;fg=ff9900</b>.</div>
+    <div class="cset" v-for="(v,i) in draft.vlans" :key="i">
+      <b>VLAN {{ v.id }} {{ v.name }}</b> &middot; <a :href="'/clock/' + v.id" target="_blank" rel="noopener" style="color:var(--accent)">/clock/{{ v.id }}</a>
+      <div class="cgrid"><label class="chk" v-for="f in clockFlags" :key="f[0]"><input type="checkbox" v-model="v.clock[f[0]]"> {{ f[1] }}</label></div>
+      <div class="cpick">
+        <label>Month <select v-model="v.clock.month_style"><option value="long">November</option><option value="short">Nov</option><option value="numeric">11</option></select></label>
+        <label>Language <select v-model="v.clock.lang"><option value="en">English</option><option value="de">Deutsch</option></select></label>
+        <label>Font <select v-model="v.clock.font"><option value="ds-digital">Digital</option><option value="chakra-petch">Chakra Petch</option><option value="oxanium">Oxanium</option><option value="share-tech-mono">Share Tech Mono</option><option value="system">System</option></select></label>
+        <label>Text <input type="color" v-model="v.clock.fg"></label>
+        <label>Background <input type="color" v-model="v.clock.bg"></label>
+      </div>
+    </div>
+    <div class="smeta" style="text-align:left" v-if="!draft.vlans.length">Add a VLAN first.</div>
+  </div></div>
   <div class="sform" style="margin-top:16px">
     <div class="card"><div class="lbl">Node-RED</div>
       <label class="chk"><input type="checkbox" v-model="draft.nodered.ui"> Open the Node-RED page (port 1880) on every VLAN with MGMT on</label>
@@ -272,7 +291,10 @@ input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
     <div class="card"><div class="lbl">Custom</div>
       <textarea v-model="up.custom" placeholder="ntp.example.org"></textarea></div>
     <div class="card sfull"><label class="chk"><input type="checkbox" v-model="draft.upstream.local_fallback"> Keep serving time (stratum 10) when no upstream is reachable</label>
-      <div class="smeta" style="text-align:left;margin-top:6px">Off is safer: clients then see the server as unsynchronised instead of trusting a drifting clock.</div></div>
+    </div>
+    <div class="card sfull"><div class="lbl">Hold time without an upstream</div>
+      <label class="chk"><input type="number" min="0" max="8760" step="1" style="width:90px" placeholder="never" v-model.number="draft.upstream.holdover_hours"> hours</label>
+      <div class="smeta" style="text-align:left;margin-top:6px">After this long without a working upstream the box stops answering NTP and stops Art-Net and MTC, so that nobody trusts a drifting clock. It starts again by itself once the clock is synced. Empty = never stop, 0 = stop at once (within about 10 seconds of losing the upstream, and also for the first seconds after a boot or a restart of chrony). The count starts again when the service restarts.</div></div>
   </div>
   <div class="sst" :class="msgCls" v-if="msg">{{ msg }}<button class="xbtn" title="Dismiss" aria-label="Dismiss" @click="msg=''">&#10005;</button></div>
   <div class="actions"><button class="btn" :disabled="busy" @click="save">SAVE</button></div>

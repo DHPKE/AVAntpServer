@@ -1,3 +1,4 @@
+import copy
 import http.client
 import json
 import os
@@ -10,7 +11,7 @@ import threading
 import time
 import unittest
 
-from avantp import web
+from avantp import config, web
 from tests.test_avantp import BASE
 
 
@@ -53,6 +54,45 @@ class WebTest(unittest.TestCase):
         self.assertEqual(st, 200)
         self.assertIn("default-src 'none'", r.getheader("Content-Security-Policy"))
         self.assertEqual(r.getheader("X-Content-Type-Options"), "nosniff")
+
+    def write_active(self, edit=lambda c: None):
+        c = copy.deepcopy(BASE)
+        edit(c)
+        with open(os.path.join(self.dir, "config.json"), "w") as f:
+            json.dump(config.dump(config.validate(c)), f)
+
+    def test_wall_clock_needs_no_login_and_shows_nothing_but_the_time(self):
+        self.write_active(lambda c: c["vlans"][1].update(clock={"seconds": False, "fg": "#FF9900"}))
+        st, page, r = self.req("GET", "/clock/20")
+        self.assertEqual((st, b"/clock.js" in page), (200, True))
+        self.assertIn("font-src 'self'", r.getheader("Content-Security-Policy"))
+        self.assertEqual(self.req("GET", "/clock")[0], 200)                         # the chooser, or a redirect for a known address
+        st, d, _ = self.req("GET", "/api/clock/20")
+        self.assertEqual(st, 200)
+        self.assertEqual((d["id"], d["name"], d["timezone"]), (20, "show", "America/New_York"))
+        self.assertEqual((d["settings"]["seconds"], d["settings"]["fg"], d["settings"]["year"]), (False, "#ff9900", True))
+        self.assertLess(abs(d["time_ms"] / 1000 - time.time()), 5)
+        self.assertNotIn("10.20.0.2", json.dumps(d))                                # no addresses, no config
+        self.assertEqual(self.req("GET", "/api/clock")[1], {"vlans": [{"id": 10, "name": "mgmt"}, {"id": 20, "name": "show"}, {"id": 30, "name": "dhcp-site"}]})
+        self.assertEqual(self.req("GET", "/api/clock/999")[0], 404)
+        self.assertEqual(self.req("GET", "/fonts/ds-digital-700.woff2")[0], 200)
+        for p in ("/fonts/../app.js", "/fonts/other.woff2", "/clock/abc", "/clock/20/x", "/api/clock/x"):
+            self.assertEqual(self.req("GET", p)[0], 401, p)                         # anything else still needs the login
+
+    def test_wall_clock_reports_whether_the_time_can_be_trusted(self):
+        from unittest import mock
+        self.write_active()
+        for wan, connected, serving in ((None, None, True), ({"connected": True, "serving": True}, True, True),
+                                        ({"connected": False, "serving": True}, False, True), ({"connected": False, "serving": False}, False, False)):
+            with mock.patch.object(web.syncstate, "read_wan", return_value=wan):
+                d = self.req("GET", "/api/clock/10")[1]
+            self.assertEqual((d["connected"], d["serving"]), (connected, serving), wan)
+
+    def test_wall_clock_goes_to_the_vlan_whose_address_was_used(self):
+        self.write_active()
+        self.assertEqual(self.app.clock_home("10.20.0.2"), 20)
+        self.assertIsNone(self.app.clock_home("10.99.0.2"))                          # unknown address, and DHCP VLANs: the chooser
+        self.assertIsNone(self.app.clock_home("not an address"))
 
     def test_api_needs_login(self):
         for p in ("/api/status", "/api/config"):

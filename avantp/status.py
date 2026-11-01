@@ -4,7 +4,7 @@ import json
 import subprocess
 import time
 
-from . import names
+from . import names, syncstate
 
 def _run(argv, timeout=3):
     try:
@@ -36,7 +36,7 @@ def parse_sources(csv):
     return out
 
 
-def _is_ip(x):
+def is_ip(x):
     try:
         ipaddress.ip_address(x)
         return True
@@ -48,16 +48,19 @@ def add_hosts(tracking, sources, resolver=None):
     """Adds `host` (reverse DNS name, or None while unknown) next to each address chrony reported."""
     resolver = resolver or names.resolver
     if tracking:
-        tracking["ref_host"] = resolver.get(tracking["ref_name"]) if _is_ip(tracking["ref_name"]) else tracking["ref_name"]
+        tracking["ref_host"] = resolver.get(tracking["ref_name"]) if is_ip(tracking["ref_name"]) else tracking["ref_name"]
     for src in sources:
-        src["host"] = resolver.get(src["name"]) if _is_ip(src["name"]) else src["name"]
+        src["host"] = resolver.get(src["name"]) if is_ip(src["name"]) else src["name"]
 
 
-def chrony():
+def chrony(hosts=True):
+    """chronyd's view. `hosts=False` skips the reverse-DNS names (the watchdog only needs addresses)."""
+    now = time.time()
     t = parse_tracking(_run(["chronyc", "-h", "127.0.0.1", "-c", "tracking"]))
     sources = parse_sources(_run(["chronyc", "-h", "127.0.0.1", "-c", "sources"])) if t else []
-    add_hosts(t, sources)
-    return {"running": t is not None, "tracking": t, "sources": sources}
+    if hosts:
+        add_hosts(t, sources)
+    return {"running": t is not None, "tracking": t, "sources": sources, "sync": syncstate.sync_state(t, sources, now, syncstate.read_wan(now))}
 
 
 def interfaces():

@@ -11,10 +11,19 @@ TZ_RE = re.compile(r"^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+){0,2}$")
 NAME_RE = re.compile(r"^\w[\w .()\-\u2010-\u2015]{0,31}$")
 CONTROL_RE = re.compile(r"[\x00-\x1f\x7f\x85\u2028\u2029]")
 HOST_RE = re.compile(r"^(?=.{1,253}$)([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$")
+MAX_HOLDOVER_HOURS = 8760        # one year
 MAX_VLANS = 20
 NODERED_PORT = 1880          # Node-RED editor/dashboard; fixed like the WebUI port
 USER_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 FRAME_RATES = (24, 25, 29.97, 30)
+# the public wall clock page (/clock/<vlan>): what it shows and how it looks, per VLAN
+CLOCK_FLAGS = ("seconds", "weekday", "day", "month", "year", "zone", "name", "sync", "hours12", "blink")
+CLOCK_CHOICES = {"month_style": ("long", "short", "numeric"), "lang": ("en", "de"),
+                 "font": ("ds-digital", "chakra-petch", "oxanium", "share-tech-mono", "system")}
+CLOCK_DEFAULT = {"seconds": True, "weekday": True, "day": True, "month": True, "year": True, "zone": True, "name": False,
+                 "sync": True, "hours12": False, "blink": True, "month_style": "long", "lang": "en", "font": "ds-digital",
+                 "fg": "#00ee88", "bg": "#000000"}
+COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 class ConfigError(ValueError):
@@ -104,6 +113,10 @@ def validate(cfg, strict=True):
     _need(up["default"] or up["backup"] or up["custom"], "at least one upstream NTP source required")
     up.setdefault("local_fallback", False)
     _need(isinstance(up["local_fallback"], bool), "upstream.local_fallback must be true or false")
+    up.setdefault("holdover_hours", None)
+    h = up["holdover_hours"]
+    _need(h is None or isinstance(h, int) and not isinstance(h, bool) and 0 <= h <= MAX_HOLDOVER_HOURS,
+          f"upstream.holdover_hours must be empty (never stop) or a whole number from 0 (stop at once) to {MAX_HOLDOVER_HOURS}")
 
     vlans = cfg.setdefault("vlans", [])
     _need(len(vlans) <= MAX_VLANS, f"at most {MAX_VLANS} VLANs")
@@ -170,6 +183,7 @@ def validate(cfg, strict=True):
                 _need(ip in net, f"vlan {vid}: Art-Net destination {dest} is not on this VLAN's network {net}")
                 _need(ip not in (v["_if"].ip, net.network_address, net.broadcast_address),
                       f"vlan {vid}: Art-Net destination {dest} is this box or the network/broadcast address; use 'broadcast' for that")
+        v["clock"] = clock_settings(v.get("clock"), vid)
         v["iface"] = f"{lan['iface']}.{vid}"
     _need(wan["commissioning"] or any(v["mgmt"] for v in vlans),
           "at least one VLAN must have mgmt=true (WebUI/SSH access), or enable wan.commissioning")
@@ -179,6 +193,21 @@ def validate(cfg, strict=True):
     _need(web["port"] == 8443, "webui.port is fixed at 8443")
     cfg["wan"], cfg["lan"] = wan, lan
     return cfg
+
+
+def clock_settings(raw, vid="?"):
+    """The wall clock's settings with defaults filled in. Raises ConfigError for anything not allowed."""
+    _need(raw is None or isinstance(raw, dict), f"vlan {vid}: clock must be an object")
+    c = dict(CLOCK_DEFAULT, **(raw or {}))
+    _need(set(c) == set(CLOCK_DEFAULT), f"vlan {vid}: unknown clock setting {sorted(set(c) - set(CLOCK_DEFAULT))}")
+    for k in CLOCK_FLAGS:
+        _need(isinstance(c[k], bool), f"vlan {vid}: clock.{k} must be true or false")
+    for k, allowed in CLOCK_CHOICES.items():
+        _need(c[k] in allowed, f"vlan {vid}: clock.{k} must be one of {allowed}")
+    for k in ("fg", "bg"):
+        _need(isinstance(c[k], str) and COLOR_RE.match(c[k]), f"vlan {vid}: clock.{k} must be a colour like #00ee88")
+        c[k] = c[k].lower()
+    return c
 
 
 def load(path, strict=True):

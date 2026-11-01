@@ -327,7 +327,6 @@ class SystemExecutor:
 
     def takeover(self, cfg):
         self.sh("systemctl", "disable", "networking")
-        self.sh("ifdown", "--force", cfg["wan"]["iface"], check=False)   # stops dhcpcd; networkd gets the lease next
         self.sh("systemctl", "enable", "--now", "systemd-resolved")
         link = self.p.under("etc/resolv.conf")          # from now on resolved (fed by networkd's DHCP) owns DNS
         os.makedirs(os.path.dirname(link), exist_ok=True)
@@ -358,11 +357,16 @@ class SystemExecutor:
         for i in removed:
             self.sh("ip", "link", "delete", i, check=False)
         self.sh("systemctl", "enable", "--now", "systemd-resolved", "systemd-networkd")
-        net_changed = takeover or any(r.startswith("etc/systemd/network/") for r in changed)
-        if net_changed:               # an apply that leaves the network files alone (e.g. Art-Net on) must not touch the network
+        wan = cfg["wan"]["iface"]
+        retire = "etc/network/interfaces" in changed       # the installer's stanza is gone: its dhcpcd must let go of the WAN
+        links = self.links_of(changed, cfg) | ({wan} if retire else set())
+        if takeover or retire or links:   # an apply that leaves the network files alone (e.g. Art-Net on) must not touch the network
             self.sh("networkctl", "reload")
-        names = ([cfg["wan"]["iface"], cfg["lan"]["iface"]] + [f"{cfg['lan']['iface']}.{v['id']}" for v in cfg["vlans"]]
-                 if takeover else sorted(self.links_of(changed, cfg)))
+        if retire:
+            self.sh("dhcpcd", "--release", wan, check=False)      # ifdown cannot do it any more: the stanza it needs is gone
+            self.sh("systemctl", "stop", f"ifup@{wan}", check=False)
+        names = ([wan, cfg["lan"]["iface"]] + [f"{cfg['lan']['iface']}.{v['id']}" for v in cfg["vlans"]]
+                 if takeover else sorted(links))
         for n in names:
             self.sh("networkctl", "reconfigure", n, check=False)
         self.sh("systemctl", "enable", "chrony")

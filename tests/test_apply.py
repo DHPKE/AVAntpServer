@@ -289,6 +289,20 @@ class ChangedOnlyTest(unittest.TestCase):
         ex.activate(cfg, [], True, set())                              # takeover: everything is configured from scratch
         self.assertEqual(len([a for a in ran if a[:2] == ("networkctl", "reconfigure")]), 2 + len(cfg["vlans"]))
 
+    def test_dropping_the_installer_stanza_retires_dhcpcd_before_networkd_takes_the_wan(self):
+        ex = apply.SystemExecutor(self.p)
+        ran = []
+        ex.sh = lambda *argv, check=True, timeout=60: ran.append(argv)
+        cfg = config.validate(copy.deepcopy(BASE))
+        ex.activate(cfg, [], False, {"etc/network/interfaces"})
+        order = [a[:2] for a in ran if a[0] in ("networkctl", "dhcpcd") or a[:2] == ("systemctl", "stop")]
+        self.assertEqual(order, [("networkctl", "reload"), ("dhcpcd", "--release"), ("systemctl", "stop"), ("networkctl", "reconfigure")])
+        self.assertIn(("systemctl", "stop", "ifup@enp4s0"), ran)
+        self.assertEqual([a[2] for a in ran if a[:2] == ("networkctl", "reconfigure")], ["enp4s0"])   # only the WAN
+        ran.clear()
+        ex.activate(cfg, [], False, {"etc/systemd/network/30-avantp-enp3s0.10.network"})
+        self.assertEqual([a for a in ran if a[0] == "dhcpcd"], [])      # an ordinary apply leaves dhcpcd alone
+
     def test_rollback_reconfigures_only_changed_links(self):
         ex = apply.SystemExecutor(self.p)
         ran = []
@@ -425,7 +439,6 @@ class TakeoverTest(unittest.TestCase):
         ex.sh = lambda *argv, check=True, timeout=60: ran.append(argv)
         ex.takeover(config.validate(copy.deepcopy(BASE)))
         self.assertIn(("systemctl", "disable", "networking"), ran)
-        self.assertIn(("ifdown", "--force", "enp4s0"), ran)
         self.assertIn(("systemctl", "enable", "--now", "systemd-resolved"), ran)
         self.assertEqual(os.readlink(os.path.join(root, "etc/resolv.conf")), "../run/systemd/resolve/stub-resolv.conf")
         # ifupdown goes away only AFTER nothing else can fail halfway: networkd is enabled last

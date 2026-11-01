@@ -8,14 +8,15 @@ import time
 
 SOURCES = {
     "all": ["avantp-web", "avantp-apply", "avantp-update", "avantp-software", "avantp-timecode", "avantp-nftables",
-            "avantp-recover"],
+            "avantp-recover", "avantp-heal"],
     "web": ["avantp-web"], "apply": ["avantp-apply", "avantp-recover"], "update": ["avantp-update"],
     "software": ["avantp-software"],
     "timecode": ["avantp-timecode"], "firewall": ["avantp-nftables"],
-    "chrony": ["chrony"], "network": ["systemd-networkd", "systemd-resolved"],
+    "chrony": ["chrony", "avantp-heal"], "network": ["systemd-networkd", "systemd-resolved"],
     "kernel": None,                                   # -k: kernel messages, e.g. NIC link changes, hardware errors
 }
 LEVELS = {"all": None, "warning": 4, "error": 3}          # worst syslog number a line may have to be shown
+GREP_TIMEOUT = 30        # a text search reads every entry of the boot: 9 s for 180 000 WebUI request lines on the box
 MAX_LINES, MAX_BYTES = 1000, 400_000
 _boots_cache = (0.0, None)
 
@@ -108,7 +109,7 @@ def tail(source="all", level="all", lines=200, boot=0, since=0):
         # priority, and what only the words say (our services log to stderr = info). Merged, then judged by severity().
         words = "|".join(r.pattern for r in ((ERR_TEXT,) if limit == 3 else (ERR_TEXT, WARN_TEXT)))
         out1, err = _journalctl(args + ["-p", str(limit)])
-        out2, err2 = _journalctl(args + ["--case-sensitive=false", "--grep", words])
+        out2, err2 = _journalctl(args + ["--case-sensitive=false", "--grep", words], timeout=GREP_TIMEOUT)
         err = err or err2
         seen, rows = set(), []
         for raw in ((out1 or "") + (out2 or "")).splitlines():

@@ -210,7 +210,7 @@ class NetnsExecutor(apply.SystemExecutor):
     def sh(self, *argv, check=True, timeout=60):
         if argv[0] in ("nft", "sysctl"):
             argv = ("ip", "netns", "exec", "box") + argv
-        elif argv[0] in ("systemctl", "networkctl", "ifdown", "ip"):
+        elif argv[0] in ("systemctl", "networkctl", "dhcpcd", "ip"):
             return subprocess.CompletedProcess(argv, 0, "", "")
         r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
         if check and r.returncode:

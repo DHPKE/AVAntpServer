@@ -254,6 +254,43 @@ class Render(unittest.TestCase):
         self.assertIn("allow 10.10.10.0/24", c)
         self.assertNotIn("allow all", c)
 
+    def test_holdover_hours_validated(self):
+        self.assertIsNone(cfg()["upstream"]["holdover_hours"])                        # not set: never stop
+        for good in (None, 0, 1, 24, config.MAX_HOLDOVER_HOURS):
+            c = copy.deepcopy(BASE)
+            c["upstream"]["holdover_hours"] = good
+            self.assertEqual(config.validate(c)["upstream"]["holdover_hours"], good)
+        for bad in (-1, config.MAX_HOLDOVER_HOURS + 1, 1.5, "6", True, ""):
+            c = copy.deepcopy(BASE)
+            c["upstream"]["holdover_hours"] = bad
+            with self.assertRaises(config.ConfigError):
+                config.validate(c)
+
+    def test_clock_settings_get_defaults_and_reject_anything_else(self):
+        self.assertEqual(cfg()["vlans"][0]["clock"], config.CLOCK_DEFAULT)
+        c = copy.deepcopy(BASE)
+        c["vlans"][0]["clock"] = {"seconds": False, "month_style": "numeric", "lang": "de", "font": "oxanium", "fg": "#FF9900"}
+        got = config.validate(c)["vlans"][0]["clock"]
+        self.assertEqual((got["seconds"], got["month_style"], got["lang"], got["font"], got["fg"]), (False, "numeric", "de", "oxanium", "#ff9900"))
+        self.assertTrue(got["year"])                                                  # what was not given keeps its default
+        for bad in ({"seconds": "yes"}, {"seconds": 1}, {"font": "comic-sans"}, {"lang": "fr"}, {"month_style": "x"},
+                    {"fg": "red"}, {"bg": "#12345"}, {"bg": "#12345g"}, {"nonsense": True}, [], "x"):
+            c = copy.deepcopy(BASE)
+            c["vlans"][0]["clock"] = bad
+            with self.assertRaises(config.ConfigError, msg=bad):
+                config.validate(c)
+
+    def test_chrony_access_rules_are_what_the_config_renders(self):
+        c = cfg()
+        self.assertEqual([f"{r}\n" for r in render.chrony_access(c)], [l for l in render.chrony(c).splitlines(True) if l.startswith("allow ")])
+
+    def test_ifupdown_keeps_loopback_only_so_nothing_else_runs_dhcp_on_the_wan(self):
+        text = render.ifupdown()
+        self.assertIn("iface lo inet loopback", text)
+        self.assertNotIn("dhcp", text)
+        self.assertNotIn("hotplug", text)
+        self.assertEqual(render.render_all(cfg())["etc/network/interfaces"], text)
+
     def test_sysctl_forwarding_off(self):
         s = render.sysctl(cfg())
         self.assertIn("net.ipv4.ip_forward=0", s)

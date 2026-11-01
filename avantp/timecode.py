@@ -20,7 +20,7 @@ import subprocess
 import time
 import zoneinfo
 
-from . import config
+from . import config, syncstate
 
 log = logging.getLogger("timecode")
 ARTNET_PORT = 6454
@@ -101,6 +101,7 @@ class Sender:
         self.cfg_mtime = None
         self.addr_at = 0
         self.addr = {}
+        self.held, self.held_at = False, 0          # hold time without an upstream used up (the watchdog says so): send nothing
         self.written = 0
 
     # ---- configuration
@@ -161,6 +162,11 @@ class Sender:
         self._state(vid, o, "error", f"({why})")
         return False
 
+    def refresh_held(self):
+        if self.now() - self.held_at >= 1:
+            wan = syncstate.read_wan(self.now())
+            self.held, self.held_at = bool(wan) and wan.get("serving") is False, self.now()
+
     def refresh_addresses(self):
         if self.now() - self.addr_at >= 2:
             self.addr, self.addr_at = self.addresses(), self.now()
@@ -176,6 +182,7 @@ class Sender:
         """Send every frame that is due. Returns the time of the next due frame (or None when nothing is enabled)."""
         self.reload()
         self.refresh_addresses()
+        self.refresh_held()
         t = self.now()
         nxt = None
         for vid, o in self.outputs.items():
@@ -185,6 +192,10 @@ class Sender:
                     o["sock"] = None
                 o["error"] = None
                 self._state(vid, o, "off")
+                continue
+            if self.held:
+                o["error"], o["state"] = None, "held"
+                self._state(vid, o, "held", "(no upstream for longer than the configured hold time; nothing is sent)")
                 continue
             rate = FRAME_RATE[o["fps"]]
             local_ip, bcast, net = (tuple(self.addr.get(o["iface"], ())) + (None, None, None))[:3]
@@ -243,15 +254,15 @@ class Sender:
     # ---- MTC over RTP-MIDI
     def _tick_mtc(self):
         from . import rtpmidi
-        due = None
+        due, t = None, self.now()
         for vid, o in self.outputs.items():
             ep = self.mtc.get(vid)
-            if not o["mtc"]:
+            if not o["mtc"] or self.held:
                 if ep:
                     ep.close()
                     del self.mtc[vid]
-                    log.info("VLAN %s %s: MTC off", vid, o["name"])
-                o["mtc_state"] = {"state": "off"}
+                    log.info("VLAN %s %s: MTC %s", vid, o["name"], "off" if not o["mtc"] else "held (hold time without an upstream used up)")
+                o["mtc_state"] = {"state": "off" if not o["mtc"] else "held"}
                 continue
             local_ip, bcast, net = (tuple(self.addr.get(o["iface"], ())) + (None, None, None))[:3]
             ports = (rtpmidi.CONTROL_PORT, rtpmidi.DATA_PORT)
@@ -273,16 +284,17 @@ class Sender:
             if ep is None:
                 try:
                     ep = self.mtc[vid] = rtpmidi.Endpoint("AVAntp " + o["name"], local_ip, o["fps"], o["tz"], net, ports)
-                    o["mtc_ident"] = ident
+                    o["mtc_ident"], o["mtc_state_at"] = ident, None
                 except OSError as e:
                     o["mtc_state"] = {"state": "error", "error": f"cannot listen on {local_ip}:{ports[0]}: {e}"}
                     self._mtc_note(vid, o, "error", f"({o['mtc_state']['error']})")
                     continue
             nxt = ep.tick()
             due = nxt if due is None else min(due, nxt)
-            st = ep.status()
-            o["mtc_state"] = st
-            self._mtc_note(vid, o, st["state"], f"on {st['listen']}, session \"{st['name']}\", {len(st['peers'])} receiver(s) connected")
+            if o.get("mtc_state_at") is None or t - o["mtc_state_at"] >= 1:     # the quarter frames run at 100 Hz: report once a second
+                o["mtc_state_at"] = t
+                st = o["mtc_state"] = ep.status()
+                self._mtc_note(vid, o, st["state"], f"on {st['listen']}, session \"{st['name']}\", {len(st['peers'])} receiver(s) connected")
         return due
 
     def _mtc_note(self, vid, o, state, detail=""):
